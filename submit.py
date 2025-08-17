@@ -83,7 +83,7 @@ def parse_codes() -> List[Dict[str, Optional[str]]]:
     CODES_URL = os.getenv("CODES_URL")
     COURSE_CODE = os.getenv("COURSE_CODE")
     WEEK_NUMBER = os.getenv("WEEK_NUMBER")
-    CODES_BASE_URL = os.getenv("CODES_BASE_URL")
+    CODES_BASE_URL = os.getenv("CODES_BASE_URL", "https://raw.githubusercontent.com/bunizao/always-attend/main")
 
     result: List[Dict[str, Optional[str]]] = []
 

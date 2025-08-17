@@ -1,6 +1,6 @@
 name: Attendance Codes
 description: Submit weekly attendance codes for a course/week. You may also attach a screenshot.
-title: "FIT1111 Week 3: Attendance codes Submission"
+
 labels:
   - codes
 assignees: []

@@ -197,9 +197,9 @@ If no attendance codes can be found, return an empty array for the "codes" field
           # If still no pairs, ask user to provide proper text
           if not pairs:
             comment = (
-              "无法从 Issue 中识别出出勤代码。\n\n"
-              "请按以下格式在 Issue 正文中提供，或重新上传更清晰的截图：\n\n"
-              "```\nWorkshop 1: JZXBA\nWorkshop 2: AJYV7\nApplied 1: 6B7UF\n...\n```\n\n并在正文中同时注明：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动重试。"
+              "Could not identify attendance codes from the issue.\n\n"
+              "Please provide the codes in the issue body in the following format, or upload a clearer screenshot:\n\n"
+              "```\nWorkshop 1: JZXBA\nWorkshop 2: AJYV7\nApplied 1: 6B7UF\n...\n```\n\nAlso, please specify the following in the body:\n\n- Course code (e.g., FIT1111)\n- Week number (e.g., Week 3)\n\nThe workflow will automatically retry after the issue is updated."
             )
             subprocess.run([
               'gh','api',
@@ -214,8 +214,8 @@ If no attendance codes can be found, return an empty array for the "codes" field
             if not course: missing.append('课程代码（如 FIT1111）')
             if not week: missing.append('Week 编号（如 Week 3）')
             comment = (
-              "已识别到出勤代码，但缺少如下信息：" + "、".join(missing) + "。\n\n"
-              "请在 Issue 正文中补充：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动生成 JSON。"
+              "Attendance codes have been identified, but the following information is missing: " + ", ".join(missing) + ".\n\n"
+              "Please add the missing information to the issue body:\n\n- Course code (e.g., FIT1111)\n- Week number (e.g., Week 3)\n\nThe JSON file will be generated automatically after the issue is updated."
             )
             subprocess.run([
               'gh','api',
@@ -223,6 +223,13 @@ If no attendance codes can be found, return an empty array for the "codes" field
               '--method','POST','-f',f'body={comment}'
             ], check=False)
             sys.exit(0)
+
+          # Update issue title
+          new_title = f"{course} Week {week}: Attendance codes"
+          subprocess.run([
+            'gh','issue','edit',str(issue_no),
+            '--title', new_title
+          ], check=False)
 
           # Build JSON entries for codes
           entries = []
@@ -255,9 +262,9 @@ If no attendance codes can be found, return an empty array for the "codes" field
           # Comment success with raw URL hint
           raw = f"https://raw.githubusercontent.com/{repo}/{target_branch}/{filename}"
           ok = (
-            f"已生成 codes JSON: `{filename}`\n\n"
+            f"Generated codes JSON: `{filename}`\n\n"
             f"Raw URL: {raw}\n\n"
-            f"脚本可设置 `CODES_URL={raw}` 直接使用。"
+            f"The script can use this URL directly by setting `CODES_URL={raw}`."
           )
           subprocess.run([
             'gh','api',
