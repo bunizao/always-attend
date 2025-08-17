@@ -1,0 +1,60 @@
+name: Attendance Codes
+description: Submit weekly attendance codes for a course/week. You may also attach a screenshot.
+title: "FIT1111 Week 3: Attendance codes Submission"
+labels:
+  - codes
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide your course code and week number, then paste the attendance codes (one per line) in the specified format. You can also attach a screenshot of the codes.
+
+  - type: input
+    id: course
+    attributes:
+      label: Course code
+      description: For example, FIT1111 (3 letters + 4 digits)
+      placeholder: FIT1111
+    validations:
+      required: true
+
+  - type: input
+    id: week
+    attributes:
+      label: Week number
+      description: Numeric week index only (e.g. 3). Only integers are accepted.
+      placeholder: 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: codes
+    attributes:
+      label: Attendance codes
+      description: |
+        Provide one item per line in the following format:
+        - Workshop 1: JZXBA
+        - Workshop 2: AJYV7
+        - Applied 1: 6B7UF
+        - Applied 2: FM5WL
+      placeholder: |
+        Workshop 1: JZXBA
+        Workshop 2: AJYV7
+        Applied 1: 6B7UF
+        Applied 2: FM5WL
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Optional: Attach a clear screenshot that shows the codes. The workflow will try OCR if text is not provided.
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I confirm the course code and week number are correct.
+          required: true

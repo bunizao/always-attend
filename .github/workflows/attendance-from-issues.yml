@@ -1,0 +1,166 @@
+name: Build attendance codes from issues
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  parse-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install OCR engine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+
+      - name: Parse issue, perform OCR if needed, and commit codes JSON
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          REPO: ${{ github.repository }}
+          TARGET_BRANCH: main
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+          import os, re, json, subprocess, sys, tempfile, pathlib, urllib.request
+
+          issue_no = int(os.environ['ISSUE_NUMBER'])
+          title = os.environ.get('ISSUE_TITLE') or ''
+          body = os.environ.get('ISSUE_BODY') or ''
+          repo = os.environ['REPO']
+          target_branch = os.environ.get('TARGET_BRANCH','main')
+
+          # Extract course code (e.g., FIT1111) and week number
+          course_re = re.compile(r'\b([A-Z]{3}\d{4})\b')
+          week_re = re.compile(r'\bweek\s*(\d+)\b', re.IGNORECASE)
+          course = None
+          week = None
+          for src in (title, body):
+            if not course:
+              m = course_re.search(src)
+              if m: course = m.group(1).upper()
+            if not week:
+              m = week_re.search(src)
+              if m: week = m.group(1)
+
+          # Extract slot: code pairs from text
+          pair_re = re.compile(r'^\s*([A-Za-z]+(?:\s+\d+)?)\s*:\s*([A-Z0-9]{4,})\s*$', re.MULTILINE)
+          pairs = pair_re.findall(body)
+
+          # Find markdown image links in body
+          img_urls = re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', body)
+
+          # If no pairs found, try OCR each image
+          if not pairs and img_urls:
+            ocr_text = []
+            for url in img_urls:
+              try:
+                with tempfile.NamedTemporaryFile(suffix=pathlib.Path(url).suffix or '.png', delete=False) as tmp:
+                  urllib.request.urlretrieve(url, tmp.name)
+                  txt = subprocess.check_output(['tesseract', tmp.name, 'stdout', '-l', 'eng', '--psm', '6'], text=True)
+                  ocr_text.append(txt)
+              except Exception as e:
+                print(f"OCR failed for {url}: {e}")
+            if ocr_text:
+              text_join = '\n'.join(ocr_text)
+              pairs = pair_re.findall(text_join)
+              # Also attempt to extract course/week from OCR text
+              if not course:
+                m = course_re.search(text_join)
+                if m: course = m.group(1).upper()
+              if not week:
+                m = week_re.search(text_join)
+                if m: week = m.group(1)
+
+          # If still no pairs, ask user to provide proper text
+          if not pairs:
+            comment = (
+              "无法从 Issue 中识别出出勤代码。\n\n"
+              "请按以下格式在 Issue 正文中提供，或重新上传更清晰的截图：\n\n"
+              "```
+Workshop 1: JZXBA
+Workshop 2: AJYV7
+Applied 1: 6B7UF
+...
+```
+\n并在正文中同时注明：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动重试。"
+            )
+            subprocess.run([
+              'gh','api',
+              f'repos/{repo}/issues/{issue_no}/comments',
+              '--method','POST','-f',f'body={comment}'
+            ], check=False)
+            sys.exit(0)
+
+          # If pairs are found but course/week missing, request them
+          if not course or not week:
+            missing = []
+            if not course: missing.append('课程代码（如 FIT1111）')
+            if not week: missing.append('Week 编号（如 Week 3）')
+            comment = (
+              "已识别到出勤代码，但缺少如下信息：" + "、".join(missing) + "。\n\n"
+              "请在 Issue 正文中补充：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动生成 JSON。"
+            )
+            subprocess.run([
+              'gh','api',
+              f'repos/{repo}/issues/{issue_no}/comments',
+              '--method','POST','-f',f'body={comment}'
+            ], check=False)
+            sys.exit(0)
+
+          # Build JSON entries for codes
+          entries = []
+          for slot, code in pairs:
+            entries.append({
+              'slot': slot.strip(),
+              'date': None,
+              'code': code.strip().upper(),
+            })
+
+          # File path under data/{course}/{week}.json
+          safe_course = re.sub(r'[^A-Za-z0-9]+','', course).upper()
+          safe_week = re.sub(r'[^0-9]+','', week)
+          if not safe_week:
+            raise SystemExit('Week number must be an integer')
+          out_dir = pathlib.Path('data') / safe_course
+          out_dir.mkdir(parents=True, exist_ok=True)
+          filename = str(out_dir / f"{safe_week}.json")
+          with open(filename,'w',encoding='utf-8') as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
+
+          # Commit and push
+          subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git','add', filename], check=True)
+          msg = f"[bot] add attendance codes for {course} Week {week} (issue #{issue_no})"
+          subprocess.run(['git','commit','-m', msg], check=True)
+          subprocess.run(['git','push','origin', target_branch], check=True)
+
+          # Comment success with raw URL hint
+          raw = f"https://raw.githubusercontent.com/{repo}/{target_branch}/{filename}"
+          ok = (
+            f"已生成 codes JSON: `{filename}`\n\n"
+            f"Raw URL: {raw}\n\n"
+            f"脚本可设置 `CODES_URL={raw}` 直接使用。"
+          )
+          subprocess.run([
+            'gh','api',
+            f'repos/{repo}/issues/{issue_no}/comments',
+            '--method','POST','-f',f'body={ok}'
+          ], check=False)
+          PY
