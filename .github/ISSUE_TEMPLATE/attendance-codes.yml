@@ -24,7 +24,7 @@ body:
     attributes:
       label: Week number
       description: Numeric week index only (e.g. 3). Only integers are accepted.
-      placeholder: 3
+      placeholder: "3"
     validations:
       required: true
 
