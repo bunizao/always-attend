@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 import importlib
 import argparse
+import re
 
 import pyotp
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
@@ -76,13 +77,36 @@ def _is_storage_state_effective(path: str) -> bool:
         return False
 
 
-def parse_codes() -> List[Dict[str, Optional[str]]]:
-    import re
+async def get_enrolled_courses(page: Page) -> List[str]:
+    """
+    Scrapes the page to find all enrolled course codes.
+    This function assumes that course codes are 3 letters followed by 4 digits.
+    """
+    log_step("Scraping page for enrolled courses...")
+    try:
+        if os.getenv("DEBUG_SCRAPING") == "1":
+            log_info("Debug scraping enabled. Page content will be printed.")
+            print(await page.content())
 
+        # Try to find course codes in links first, as they are more likely to be there.
+        all_text = " ".join(await page.locator('a').all_inner_texts())
+
+        # If no codes in links, get all page text
+        if not re.search(r'\b([A-Z]{3}\d{4})\b', all_text):
+            all_text = await page.content()
+
+        course_codes = re.findall(r'\b([A-Z]{3}\d{4})\b', all_text)
+        unique_codes = sorted(list(set(course_codes)))
+        log_info(f"Found {len(unique_codes)} enrolled courses: {unique_codes}")
+        return unique_codes
+    except Exception as e:
+        log_warn(f"Could not scrape enrolled courses: {e}")
+        return []
+
+
+def parse_codes(course_code: str, week_number: str) -> List[Dict[str, Optional[str]]]:
     CODES_FILE = os.getenv("CODES_FILE")
     CODES_URL = os.getenv("CODES_URL")
-    COURSE_CODE = os.getenv("COURSE_CODE")
-    WEEK_NUMBER = os.getenv("WEEK_NUMBER")
     CODES_BASE_URL = os.getenv("CODES_BASE_URL", "https://raw.githubusercontent.com/bunizao/always-attend/main")
 
     result: List[Dict[str, Optional[str]]] = []
@@ -99,9 +123,9 @@ def parse_codes() -> List[Dict[str, Optional[str]]]:
         return result
 
     # 2) Auto-discovery via COURSE_CODE/WEEK_NUMBER/CODES_BASE_URL
-    if COURSE_CODE and WEEK_NUMBER and CODES_BASE_URL:
-        course = ''.join(ch for ch in COURSE_CODE.upper() if ch.isalnum())
-        week = ''.join(ch for ch in WEEK_NUMBER if ch.isdigit())
+    if course_code and week_number and CODES_BASE_URL:
+        course = ''.join(ch for ch in course_code.upper() if ch.isalnum())
+        week = ''.join(ch for ch in week_number if ch.isdigit())
         if week:
             auto_url = f"{CODES_BASE_URL.rstrip('/')}/data/{course}/{week}.json"
             try:
@@ -118,7 +142,7 @@ def parse_codes() -> List[Dict[str, Optional[str]]]:
                     log_info(f"Loaded {len(result)} codes via auto-discovery: {auto_url}")
                     return result
             except Exception as e:
-                log(f"Auto-discovery failed: {e}")
+                log_warn(f"Auto-discovery failed for {course_code} week {week_number}: {e}")
 
     # 3) CODES_URL
     if CODES_URL:
@@ -136,7 +160,7 @@ def parse_codes() -> List[Dict[str, Optional[str]]]:
                 log_info(f"Loaded {len(result)} codes from CODES_URL")
                 return result
         except Exception as e:
-            log(f"Failed to fetch CODES_URL: {e}")
+            log_warn(f"Failed to fetch CODES_URL: {e}")
 
     # 4) CODES_FILE
     if CODES_FILE and os.path.exists(CODES_FILE):
@@ -152,7 +176,7 @@ def parse_codes() -> List[Dict[str, Optional[str]]]:
                 log_info(f"Loaded {len(result)} codes from CODES_FILE={CODES_FILE}")
                 return result
         except Exception as e:
-            log(f"Failed to parse CODES_FILE: {e}")
+            log_warn(f"Failed to parse CODES_FILE: {e}")
 
     # 5) CODES inline
     codes_str = os.getenv("CODES")
@@ -420,17 +444,7 @@ async def run_submit(dry_run: bool = False) -> None:
     HEADLESS = os.getenv("HEADLESS", "1") not in ("0", "false", "False")
     USER_DATA_DIR = os.getenv("USER_DATA_DIR")
     STORAGE_STATE = os.getenv("STORAGE_STATE", "storage_state.json")
-
-    entries = parse_codes()
-    if not entries:
-        log_err("No attendance codes found. Set CODES_URL/CODES_FILE/CODES or use codes.sample.json.")
-        return
-    log_ok(f"Loaded {len(entries)} code entries")
-
-    if dry_run:
-        for item in entries:
-            print(" -", item)
-        return
+    WEEK_NUMBER = os.getenv("WEEK_NUMBER", "3")
 
     if not USER_DATA_DIR and os.path.exists(STORAGE_STATE) and not _is_storage_state_effective(STORAGE_STATE):
         log_warn(f"Detected empty storage state at {STORAGE_STATE}; opening interactive login...")
@@ -445,7 +459,7 @@ async def run_submit(dry_run: bool = False) -> None:
                 user_data_dir=None,
             )
         except Exception as e:
-            log(f"Auto login failed: {e}. Please run `python login.py --headed` manually.")
+            log_warn(f"Auto login failed: {e}. Please run `python login.py --headed` manually.")
             return
 
     async with async_playwright() as p:
@@ -489,33 +503,59 @@ async def run_submit(dry_run: bool = False) -> None:
                 await login(page)
             base = to_base(page.url) or to_base(PORTAL_URL)
 
-            # Process entries
-            for item in entries:
-                slot = item.get("slot")
-                date_str = item.get("date")
-                code_val = (item.get("code") or "").strip()
-                if not code_val:
-                    log(f"Skip entry without code: {item}")
+            attendance_info_url = f"{base}/student/AttendanceInfo.aspx"
+            log_step(f"Navigating to attendance info page: {attendance_info_url}")
+            await page.goto(attendance_info_url, timeout=60_000)
+
+            enrolled_courses = await get_enrolled_courses(page)
+            if not enrolled_courses:
+                log_err("No enrolled courses found on the page.")
+                return
+
+            for course in enrolled_courses:
+                log_step(f"Processing course: {course}")
+                entries = parse_codes(course_code=course, week_number=WEEK_NUMBER)
+
+                if not entries:
+                    log_warn(f"No attendance codes found for {course} week {WEEK_NUMBER}.")
+                    issues_url = os.getenv("ISSUES_NEW_URL")
+                    if issues_url:
+                        log_info(f"You can add missing codes by creating an issue at: {issues_url}")
                     continue
-                if not date_str:
-                    log_err(f"Skip entry without date (required): {item}")
+
+                log_ok(f"Loaded {len(entries)} code entries for {course}")
+
+                if dry_run:
+                    for item in entries:
+                        print(" -", item)
                     continue
-                # Validate date format and compute anchor
-                try:
-                    anchor = format_anchor(date_str)
-                except Exception:
-                    log_err(f"Skip entry with invalid date format (expect YYYY-MM-DD): {item}")
-                    continue
-                log_step(f"Processing: date={date_str} (anchor={anchor}) slot={slot}")
-                opened = await find_and_open_slot(page, base, date_str, slot)
-                if not opened:
-                    log_warn(" -> Not found or already submitted; skipping")
-                    continue
-                ok, msg = await submit_code_on_entry(page, code_val)
-                if ok:
-                    log_ok(f" -> OK: {msg}")
-                else:
-                    log_err(f" -> FAILED: {msg}")
+
+                for item in entries:
+                    slot = item.get("slot")
+                    date_str = item.get("date")
+                    code_val = (item.get("code") or "").strip()
+                    if not code_val:
+                        log_info(f"Skip entry without code: {item}")
+                        continue
+                    if not date_str:
+                        log_err(f"Skip entry without date (required): {item}")
+                        continue
+                    # Validate date format and compute anchor
+                    try:
+                        anchor = format_anchor(date_str)
+                    except Exception:
+                        log_err(f"Skip entry with invalid date format (expect YYYY-MM-DD): {item}")
+                        continue
+                    log_step(f"Processing: date={date_str} (anchor={anchor}) slot={slot}")
+                    opened = await find_and_open_slot(page, base, date_str, slot)
+                    if not opened:
+                        log_warn(" -> Not found or already submitted; skipping")
+                        continue
+                    ok, msg = await submit_code_on_entry(page, code_val)
+                    if ok:
+                        log_ok(f" -> OK: {msg}")
+                    else:
+                        log_err(f" -> FAILED: {msg}")
         finally:
             # Save storage state only for non-persistent contexts
             if browser is not None:
