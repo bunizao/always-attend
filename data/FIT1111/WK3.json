@@ -1,0 +1,16 @@
+[
+  {
+    "course": "FIT1111",
+    "week": 3,
+    "slot": "Workshop 1",
+    "date": "2025-08-25",
+    "code": "CODEW1"
+  },
+  {
+    "course": "FIT1111",
+    "week": 3,
+    "slot": "Applied 1",
+    "date": "2025-08-26",
+    "code": "CODEA1"
+  }
+]

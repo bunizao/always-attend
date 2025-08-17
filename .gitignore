@@ -206,3 +206,9 @@ __marimo__/
 # Project-specific ignores
 storage_state.json
 codes_test.json
+
+# Ignoring agent-related files
+AGENTS.md
+
+# Ignoring tests directory (not recommended)
+/tests/
