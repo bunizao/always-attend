@@ -20,12 +20,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install OCR engine
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr
-
-      - name: Parse issue, perform OCR if needed, and commit codes JSON
+      - name: Parse issue and commit codes JSON
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - << 'PY'
-          import os, re, json, subprocess, sys, tempfile, pathlib, urllib.request
+          import os, re, json, subprocess, sys, tempfile, pathlib, urllib.request, base64
 
           issue_no = int(os.environ['ISSUE_NUMBER'])
           title = os.environ.get('ISSUE_TITLE') or ''
@@ -66,14 +61,19 @@ If no attendance codes can be found, return an empty array for the "codes" field
 Issue Title: {issue_title}
 ---
 Issue Body:
-{issue_body}'''
+{issue_body}
+'''
               
               api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
               
-              headers = {"Content-Type": "application/json"} 
+              headers = {"Content-Type": "application/json"}
               
               data = {
-                  "contents": [{"parts": [{"text": prompt}]}],
+                  "contents": [{
+                      "parts": [{
+                          "text": prompt
+                      }]
+                  }],
                   "generationConfig": {
                       "response_mime_type": "application/json",
                   }
@@ -95,119 +95,173 @@ Issue Body:
                   print(f"An unexpected error occurred: {e}")
                   return None
 
-gemini_api_key = os.environ.get('GEMINI_API_KEY')
-if not gemini_api_key:
-    print("GEMINI_API_KEY secret is not set. Skipping AI processing and exiting.")
-    sys.exit(1)
+          def call_gemini_api_with_image(api_key, image_data, mime_type):
+              prompt = '''
+From the attached image, extract the course code, week number, and attendance codes.
+The course code is a 3-letter, 4-digit code (e.g., FIT1111).
+The week number is an integer.
+The attendance codes are pairs of a slot (e.g., "Workshop 1") and a code (e.g., "JZXBA").
 
-extracted_data_json = call_gemini_api(gemini_api_key, title, body)
+Return the result as a single, minified JSON object with no markdown formatting. The JSON object should have these keys: "course", "week", "codes".
+- The "course" value should be a string.
+- The "week" value should be an integer.
+- The "codes" key should hold an array of objects, where each object has a "slot" and "code" key.
 
-if not extracted_data_json:
-    print("Failed to get data from Gemini API.")
-    sys.exit(1)
+If the course code or week number cannot be found, return null for those fields.
+If no attendance codes can be found, return an empty array for the "codes" field.
+'''
+              
+              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+              
+              headers = {"Content-Type": "application/json"}
+              
+              data = {
+                  "contents": [{
+                      "parts": [
+                          {"text": prompt},
+                          {
+                              "inline_data": {
+                                  "mime_type": mime_type,
+                                  "data": image_data
+                              }
+                          }
+                      ]
+                  }],
+                  "generationConfig": {
+                      "response_mime_type": "application/json",
+                  }
+              }
+              
+              req = urllib.request.Request(api_url, data=json.dumps(data).encode("utf-8"), headers=headers)
+              
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      if response.status == 200:
+                          response_body = response.read().decode("utf-8")
+                          response_json = json.loads(response_body)
+                          return response_json['candidates'][0]['content']['parts'][0]['text']
+              except urllib.error.HTTPError as e:
+                  print(f"Gemini API request failed with status: {e.code}")
+                  print(e.read().decode())
+                  return None
+              except Exception as e:
+                  print(f"An unexpected error occurred: {e}")
+                  return None
 
-extracted_data = json.loads(extracted_data_json)
+          gemini_api_key = os.environ.get('GEMINI_API_KEY')
+          if not gemini_api_key:
+              print("GEMINI_API_KEY secret is not set. Skipping AI processing and exiting.")
+              sys.exit(1)
 
-course = extracted_data.get("course")
-week = str(extracted_data.get("week")) if extracted_data.get("week") else None
-pairs = []
-if extracted_data.get("codes"):
-    for item in extracted_data.get("codes"):
-        pairs.append((item.get("slot"), item.get("code")))
+          # Try to get data from text first
+          extracted_data_json = call_gemini_api(gemini_api_key, title, body)
+          course = None
+          week = None
+          pairs = []
+          if extracted_data_json:
+              try:
+                  extracted_data = json.loads(extracted_data_json)
+                  course = extracted_data.get("course")
+                  week = str(extracted_data.get("week")) if extracted_data.get("week") else None
+                  if extracted_data.get("codes"):
+                      for item in extracted_data.get("codes"):
+                          pairs.append((item.get("slot"), item.get("code")))
+              except json.JSONDecodeError:
+                  print("Failed to decode JSON from Gemini text response.")
 
-# If no pairs found, try OCR each image
-if not pairs:
-    img_urls = re.findall(r'!\\\[[^\\]*\]\((https?://[^)]+)\)', body)
-    if img_urls:
-        ocr_text = []
-        for url in img_urls:
-            try:
-                with tempfile.NamedTemporaryFile(suffix=pathlib.Path(url).suffix or '.png', delete=False) as tmp:
-                  urllib.request.urlretrieve(url, tmp.name)
-                  txt = subprocess.check_output(['tesseract', tmp.name, 'stdout', '-l', 'eng', '--psm', '6'], text=True)
-                  ocr_text.append(txt)
-            except Exception as e:
-                print(f"OCR failed for {url}: {e}")
-        if ocr_text:
-            text_join = '\n'.join(ocr_text)
-            # Call Gemini again with the OCR'd text
-            extracted_data_json = call_gemini_api(gemini_api_key, title, text_join)
-            if extracted_data_json:
-                extracted_data = json.loads(extracted_data_json)
-                course = extracted_data.get("course")
-                week = str(extracted_data.get("week")) if extracted_data.get("week") else None
-                if extracted_data.get("codes"):
-                    for item in extracted_data.get("codes"):
-                        pairs.append((item.get("slot"), item.get("code")))
+          # If no pairs from text, try image
+          if not pairs:
+              img_urls = re.findall(r'!\\[^\\]*\\]\((https?://[^)]+)\)', body)
+              if img_urls:
+                  for url in img_urls:
+                      try:
+                          with urllib.request.urlopen(url) as resp:
+                              image_bytes = resp.read()
+                              content_type = resp.info().get_content_type()
+                              image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                              
+                              extracted_data_json = call_gemini_api_with_image(gemini_api_key, image_b64, content_type)
+                              if extracted_data_json:
+                                  extracted_data = json.loads(extracted_data_json)
+                                  course = extracted_data.get("course")
+                                  week = str(extracted_data.get("week")) if extracted_data.get("week") else None
+                                  if extracted_data.get("codes"):
+                                      for item in extracted_data.get("codes"):
+                                          pairs.append((item.get("slot"), item.get("code")))
+                                  # If we got something from the first image, we can stop.
+                                  if pairs:
+                                      break
+                      except Exception as e:
+                          print(f"Failed to process image at {url}: {e}")
 
-# If still no pairs, ask user to provide proper text
-if not pairs:
-  comment = (
-    "无法从 Issue 中识别出出勤代码。\n\n"
-    "请按以下格式在 Issue 正文中提供，或重新上传更清晰的截图：\n\n"
-    "```\nWorkshop 1: JZXBA\nWorkshop 2: AJYV7\nApplied 1: 6B7UF\n...\n```\n\n并在正文中同时注明：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动重试。"
-  )
-  subprocess.run([
-    'gh','api',
-    f'repos/{repo}/issues/{issue_no}/comments',
-    '--method','POST','-f',f'body={comment}'
-  ], check=False)
-  sys.exit(0)
+          # If still no pairs, ask user to provide proper text
+          if not pairs:
+            comment = (
+              "无法从 Issue 中识别出出勤代码。\n\n"
+              "请按以下格式在 Issue 正文中提供，或重新上传更清晰的截图：\n\n"
+              "```\nWorkshop 1: JZXBA\nWorkshop 2: AJYV7\nApplied 1: 6B7UF\n...\n```\n\n并在正文中同时注明：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动重试。"
+            )
+            subprocess.run([
+              'gh','api',
+              f'repos/{repo}/issues/{issue_no}/comments',
+              '--method','POST','-f',f'body={comment}'
+            ], check=False)
+            sys.exit(0)
 
-# If pairs are found but course/week missing, request them
-if not course or not week:
-  missing = []
-  if not course: missing.append('课程代码（如 FIT1111）')
-  if not week: missing.append('Week 编号（如 Week 3）')
-  comment = (
-    "已识别到出勤代码，但缺少如下信息：" + "、".join(missing) + "。\n\n"
-    "请在 Issue 正文中补充：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动生成 JSON。"
-  )
-  subprocess.run([
-    'gh','api',
-    f'repos/{repo}/issues/{issue_no}/comments',
-    '--method','POST','-f',f'body={comment}'
-  ], check=False)
-  sys.exit(0)
+          # If pairs are found but course/week missing, request them
+          if not course or not week:
+            missing = []
+            if not course: missing.append('课程代码（如 FIT1111）')
+            if not week: missing.append('Week 编号（如 Week 3）')
+            comment = (
+              "已识别到出勤代码，但缺少如下信息：" + "、".join(missing) + "。\n\n"
+              "请在 Issue 正文中补充：\n\n- 课程代码（例如：FIT1111）\n- Week 编号（例如：Week 3）\n\n更新 Issue 后，工作流会自动生成 JSON。"
+            )
+            subprocess.run([
+              'gh','api',
+              f'repos/{repo}/issues/{issue_no}/comments',
+              '--method','POST','-f',f'body={comment}'
+            ], check=False)
+            sys.exit(0)
 
-# Build JSON entries for codes
-entries = []
-for slot, code in pairs:
-  entries.append({
-    'slot': slot.strip(),
-    'date': None,
-    'code': code.strip().upper(),
-  })
+          # Build JSON entries for codes
+          entries = []
+          for slot, code in pairs:
+            entries.append({
+              'slot': slot.strip(),
+              'date': None,
+              'code': code.strip().upper(),
+            })
 
-# File path under data/{course}/{week}.json
-safe_course = re.sub(r'[^A-Za-z0-9]+','', course).upper()
-safe_week = re.sub(r'[^0-9]+','', week)
-if not safe_week:
-  raise SystemExit('Week number must be an integer')
-out_dir = pathlib.Path('data') / safe_course
-out_dir.mkdir(parents=True, exist_ok=True)
-filename = str(out_dir / f"{safe_week}.json")
-with open(filename,'w',encoding='utf-8') as f:
-  json.dump(entries, f, ensure_ascii=False, indent=2)
+          # File path under data/{course}/{week}.json
+          safe_course = re.sub(r'[^A-Za-z0-9]+','', course).upper()
+          safe_week = re.sub(r'[^0-9]+','', week)
+          if not safe_week:
+            raise SystemExit('Week number must be an integer')
+          out_dir = pathlib.Path('data') / safe_course
+          out_dir.mkdir(parents=True, exist_ok=True)
+          filename = str(out_dir / f"{safe_week}.json")
+          with open(filename,'w',encoding='utf-8') as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
 
-# Commit and push
-subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
-subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
-subprocess.run(['git','add', filename], check=True)
-msg = f"[bot] add attendance codes for {course} Week {week} (issue #{issue_no})"
-subprocess.run(['git','commit','-m', msg], check=True)
-subprocess.run(['git','push','origin', target_branch], check=True)
+          # Commit and push
+          subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git','add', filename], check=True)
+          msg = f"[bot] add attendance codes for {course} Week {week} (issue #{issue_no})"
+          subprocess.run(['git','commit','-m', msg], check=True)
+          subprocess.run(['git','push','origin', target_branch], check=True)
 
-# Comment success with raw URL hint
-raw = f"https://raw.githubusercontent.com/{repo}/{target_branch}/{filename}"
-ok = (
-  f"已生成 codes JSON: `{filename}`\n\n"
-  f"Raw URL: {raw}\n\n"
-  f"脚本可设置 `CODES_URL={raw}` 直接使用。"
-)
-subprocess.run([
-  'gh','api',
-  f'repos/{repo}/issues/{issue_no}/comments',
-  '--method','POST','-f',f'body={ok}'
-], check=False)
-PY
+          # Comment success with raw URL hint
+          raw = f"https://raw.githubusercontent.com/{repo}/{target_branch}/{filename}"
+          ok = (
+            f"已生成 codes JSON: `{filename}`\n\n"
+            f"Raw URL: {raw}\n\n"
+            f"脚本可设置 `CODES_URL={raw}` 直接使用。"
+          )
+          subprocess.run([
+            'gh','api',
+            f'repos/{repo}/issues/{issue_no}/comments',
+            '--method','POST','-f',f'body={ok}'
+          ], check=False)
+          PY
