@@ -307,18 +307,16 @@ jobs:
           # If still no pairs, ask user to provide proper text
           if not pairs:
               comment = (
-                "Could not identify attendance codes from the issue.\n\n"
-                "Please provide the codes in the issue body in the following format, or upload a clearer screenshot:\n\n"
-                "```\nWorkshop 1: JZXBA\nWorkshop 2: AJYV7\nApplied 1: 6B7UF\n...\n```\n\nAlso, please specify the following in the body:\n\n- Course code (e.g., FIT1111)\n- Week number (e.g., Week 3)\n\nThe workflow will automatically retry after the issue is updated."
+                  "Could not identify attendance codes from the issue.\n\n"
+                  "Please provide the codes in the issue body in the following format, or upload a clearer screenshot:\n\n"
+                  "```\nWorkshop 1: JZXBA\nWorkshop 2: AJYV7\nApplied 1: 6B7UF\n...\n```\n\nAlso, please specify the following in the body:\n\n- Course code (e.g., FIT1111)\n- Week number (e.g., Week 3)\n\nThe workflow will automatically retry after the issue is updated."
               )
-            if 'img_urls' in locals() and img_urls and not gemini_api_key:
-              comment += "\n\nNote: A screenshot was detected, but OCR is disabled because `GEMINI_API_KEY` secret is not set in this repository."
-            subprocess.run([
-              'gh','api',
-              f'repos/{repo}/issues/{issue_no}/comments',
-              '--method','POST','-f',f'body={comment}'
-            ], check=False)
-            sys.exit(0)
+              subprocess.run([
+                  'gh','api',
+                  f'repos/{repo}/issues/{issue_no}/comments',
+                  '--method','POST','-f',f'body={comment}'
+              ], check=False)
+              sys.exit(0)
 
           # If pairs are found but course/week missing, request them
           if not course or not week:
