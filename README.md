@@ -119,6 +119,7 @@ python submit.py [options]
 -   `CODES_FILE`: Local path to a JSON file with codes.
 -   `CODES`: Inline `slot:code;...` string.
 -   `COURSE_CODE`, `WEEK_NUMBER`, `CODES_BASE_URL`: For auto-discovery.
+-   `ISSUES_NEW_URL`: Issue creation URL to report missing codes (defaults to the project issues page).
 -   `BROWSER`: `chromium` (default), `firefox`, or `webkit`.
 -   `HEADLESS`: `1` (default) or `0` to show browser UI.
 -   `STORAGE_STATE`: Path to save/load the session state (default: `storage_state.json`).

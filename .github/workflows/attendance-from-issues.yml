@@ -7,6 +7,7 @@ on:
 permissions:
   contents: write
   issues: write
+  pull-requests: write
 
 jobs:
   parse-and-commit:
@@ -33,13 +34,50 @@ jobs:
         run: |
           set -euo pipefail
           python3 - << 'PY'
-          import os, re, json, subprocess, sys, tempfile, pathlib, urllib.request, base64
+          import os, re, json, subprocess, sys, pathlib, urllib.request, base64
 
           issue_no = int(os.environ['ISSUE_NUMBER'])
           title = os.environ.get('ISSUE_TITLE') or ''
           body = os.environ.get('ISSUE_BODY') or ''
           repo = os.environ['REPO']
           target_branch = os.environ.get('TARGET_BRANCH','main')
+
+          def parse_issue_form_text(body_text: str):
+              """Parse GitHub Issue Form sections: Course code, Week number, Attendance codes.
+
+              Returns (course:str|None, week:str|None, pairs:list[(slot,code)]).
+              """
+              course = None
+              week = None
+              pairs = []
+
+              # Common Issue Forms render as markdown headings like:
+              # ### Course code\nFIT1111\n\n### Week number\n3\n\n### Attendance codes\n...
+              sec = {
+                  'course': r"(?mis)^###\s*Course\s*code\s*\n+([^\n#]+)",
+                  'week': r"(?mis)^###\s*Week\s*number\s*\n+([^\n#]+)",
+                  'codes': r"(?mis)^###\s*Attendance\s*codes\s*\n+(.+?)(?:\n###\s|\Z)",
+              }
+              m = re.search(sec['course'], body_text)
+              if m:
+                  course = re.sub(r"[^A-Za-z0-9]+", "", m.group(1)).upper() or None
+              m = re.search(sec['week'], body_text)
+              if m:
+                  wk = re.sub(r"[^0-9]+", "", m.group(1))
+                  week = wk if wk else None
+              m = re.search(sec['codes'], body_text)
+              if m:
+                  code_block = m.group(1)
+                  for line in code_block.splitlines():
+                      line = line.strip()
+                      if not line:
+                          continue
+                      # Accept optional list markers and flexible spacing
+                      mm = re.match(r"^[-*+]?\s*([^:]+?)\s*:\s*([A-Za-z0-9]{4,12})\s*$", line)
+                      if mm:
+                          slot, code = mm.group(1).strip(), mm.group(2).strip().upper()
+                          pairs.append((slot, code))
+              return course, week, pairs
 
           def call_gemini_api(api_key, issue_title, issue_body):
               # Note: Using gemini-1.5-flash as gemini-2.5-flash is not a valid model at this time.
@@ -148,44 +186,46 @@ If no attendance codes can be found, return an empty array for the "codes" field
                   print(f"An unexpected error occurred: {e}")
                   return None
 
+          # First, try deterministic parsing from the Issue Form
+          course, week, pairs = parse_issue_form_text(body)
+
           gemini_api_key = os.environ.get('GEMINI_API_KEY')
-          if not gemini_api_key:
-              print("GEMINI_API_KEY secret is not set. Skipping AI processing and exiting.")
-              sys.exit(1)
 
-          # Try to get data from text first
-          extracted_data_json = call_gemini_api(gemini_api_key, title, body)
-          course = None
-          week = None
-          pairs = []
-          if extracted_data_json:
-              try:
-                  extracted_data = json.loads(extracted_data_json)
-                  course = extracted_data.get("course")
-                  week = str(extracted_data.get("week")) if extracted_data.get("week") else None
-                  if extracted_data.get("codes"):
-                      for item in extracted_data.get("codes"):
-                          pairs.append((item.get("slot"), item.get("code")))
-              except json.JSONDecodeError:
-                  print("Failed to decode JSON from Gemini text response.")
+          # If still missing, optionally try Gemini on text
+          if (not course or not week or not pairs) and gemini_api_key:
+              extracted_data_json = call_gemini_api(gemini_api_key, title, body)
+              if extracted_data_json:
+                  try:
+                      extracted_data = json.loads(extracted_data_json)
+                      course = course or extracted_data.get("course")
+                      week = week or (str(extracted_data.get("week")) if extracted_data.get("week") else None)
+                      if not pairs and extracted_data.get("codes"):
+                          for item in extracted_data.get("codes"):
+                              pairs.append((item.get("slot"), item.get("code")))
+                  except json.JSONDecodeError:
+                      print("Failed to decode JSON from Gemini text response.")
 
-          # If no pairs from text, try image
+          # If still no pairs, try image OCR via Gemini (if key present)
           if not pairs:
-              img_urls = re.findall(r'!\\[^\\]*\\]\((https?://[^)]+)\)', body)
+              img_urls = re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', body)
               if img_urls:
+                  if not gemini_api_key:
+                      print("Image(s) found but GEMINI_API_KEY not set; skipping OCR.")
+                  
                   for url in img_urls:
                       try:
                           with urllib.request.urlopen(url) as resp:
                               image_bytes = resp.read()
                               content_type = resp.info().get_content_type()
                               image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                              
+                              if not gemini_api_key:
+                                  continue
                               extracted_data_json = call_gemini_api_with_image(gemini_api_key, image_b64, content_type)
                               if extracted_data_json:
                                   extracted_data = json.loads(extracted_data_json)
-                                  course = extracted_data.get("course")
-                                  week = str(extracted_data.get("week")) if extracted_data.get("week") else None
-                                  if extracted_data.get("codes"):
+                                  course = course or extracted_data.get("course")
+                                  week = week or (str(extracted_data.get("week")) if extracted_data.get("week") else None)
+                                  if not pairs and extracted_data.get("codes"):
                                       for item in extracted_data.get("codes"):
                                           pairs.append((item.get("slot"), item.get("code")))
                                   # If we got something from the first image, we can stop.
@@ -251,13 +291,42 @@ If no attendance codes can be found, return an empty array for the "codes" field
           with open(filename,'w',encoding='utf-8') as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
 
-          # Commit and push
+          # Commit and push (with PR fallback if branch protection blocks direct push)
           subprocess.run(['git','config','user.name','github-actions[bot]'], check=True)
           subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git','fetch','origin', target_branch], check=False)
+          subprocess.run(['git','checkout', target_branch], check=False)
+          subprocess.run(['git','pull','--ff-only','origin', target_branch], check=False)
           subprocess.run(['git','add', filename], check=True)
           msg = f"[bot] add attendance codes for {course} Week {week} (issue #{issue_no})"
           subprocess.run(['git','commit','-m', msg], check=True)
-          subprocess.run(['git','push','origin', target_branch], check=True)
+
+          direct_push_ok = True
+          try:
+              subprocess.run(['git','push','origin', target_branch], check=True)
+          except subprocess.CalledProcessError:
+              direct_push_ok = False
+
+          pr_url = None
+          if not direct_push_ok:
+              # Create a branch and open a PR
+              safe_course = re.sub(r'[^A-Za-z0-9]+','', course).upper()
+              safe_week = re.sub(r'[^0-9]+','', week)
+              branch_name = f"bot/codes-{safe_course}-w{safe_week}-issue-{issue_no}"
+              subprocess.run(['git','checkout','-b', branch_name], check=True)
+              try:
+                  subprocess.run(['git','push','-u','origin', branch_name], check=True)
+                  # Create PR
+                  pr_create = subprocess.run([
+                      'gh','pr','create',
+                      '--title', msg,
+                      '--body', f"Automated codes JSON for {course} Week {week} (from issue #{issue_no}).",
+                      '--base', target_branch,
+                      '--head', branch_name
+                  ], check=True, capture_output=True, text=True)
+                  pr_url = pr_create.stdout.strip().splitlines()[-1]
+              except subprocess.CalledProcessError as e:
+                  print('Failed to create PR:', e)
 
           # Comment success with raw URL hint
           raw = f"https://raw.githubusercontent.com/{repo}/{target_branch}/{filename}"
@@ -266,6 +335,8 @@ If no attendance codes can be found, return an empty array for the "codes" field
             f"Raw URL: {raw}\n\n"
             f"The script can use this URL directly by setting `CODES_URL={raw}`."
           )
+          if pr_url:
+              ok += f"\n\nDirect push was blocked; opened PR: {pr_url}"
           subprocess.run([
             'gh','api',
             f'repos/{repo}/issues/{issue_no}/comments',

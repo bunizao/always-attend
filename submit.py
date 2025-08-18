@@ -107,7 +107,7 @@ async def get_enrolled_courses(page: Page) -> List[str]:
 def parse_codes(course_code: str, week_number: str) -> List[Dict[str, Optional[str]]]:
     CODES_FILE = os.getenv("CODES_FILE")
     CODES_URL = os.getenv("CODES_URL")
-    CODES_BASE_URL = os.getenv("CODES_BASE_URL", "https://raw.githubusercontent.com/bunizao/always-attend/main")
+    CODES_BASE_URL = os.getenv("CODES_BASE_URL")
 
     result: List[Dict[str, Optional[str]]] = []
 
@@ -444,7 +444,11 @@ async def run_submit(dry_run: bool = False) -> None:
     HEADLESS = os.getenv("HEADLESS", "1") not in ("0", "false", "False")
     USER_DATA_DIR = os.getenv("USER_DATA_DIR")
     STORAGE_STATE = os.getenv("STORAGE_STATE", "storage_state.json")
-    WEEK_NUMBER = os.getenv("WEEK_NUMBER", "3")
+    WEEK_NUMBER = os.getenv("WEEK_NUMBER")
+
+    if not WEEK_NUMBER:
+        log_err("WEEK_NUMBER environment variable is not set. Please set it in your .env file.")
+        return
 
     if not USER_DATA_DIR and os.path.exists(STORAGE_STATE) and not _is_storage_state_effective(STORAGE_STATE):
         log_warn(f"Detected empty storage state at {STORAGE_STATE}; opening interactive login...")
@@ -518,9 +522,8 @@ async def run_submit(dry_run: bool = False) -> None:
 
                 if not entries:
                     log_warn(f"No attendance codes found for {course} week {WEEK_NUMBER}.")
-                    issues_url = os.getenv("ISSUES_NEW_URL")
-                    if issues_url:
-                        log_info(f"You can add missing codes by creating an issue at: {issues_url}")
+                    issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/bunizao/always-attend/issues/new"
+                    log_info(f"You can add missing codes by creating an issue at: {issues_url}")
                     continue
 
                 log_ok(f"Loaded {len(entries)} code entries for {course}")
@@ -593,6 +596,7 @@ def main():
     ap.add_argument("--channel", help="Use system browser channel (chromium only): chrome|chrome-beta|msedge|msedge-beta")
     ap.add_argument("--headed", action="store_true", help="Run with browser UI (sets HEADLESS=0)")
     ap.add_argument("--dry-run", action="store_true", help="Print parsed codes and exit (no browser)")
+    ap.add_argument("--week", help="Week number to submit (sets WEEK_NUMBER)")
     args = ap.parse_args()
 
     if args.browser:
@@ -601,6 +605,8 @@ def main():
         os.environ['BROWSER_CHANNEL'] = args.channel
     if args.headed:
         os.environ['HEADLESS'] = '0'
+    if args.week:
+        os.environ['WEEK_NUMBER'] = str(args.week)
 
     asyncio.run(run_submit(dry_run=bool(args.dry_run or os.getenv('DRY_RUN') in ('1','true','True'))))
 
