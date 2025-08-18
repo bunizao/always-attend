@@ -381,9 +381,6 @@ jobs:
                   lines = [
                       "Task list detected. Please tick (check) the items you want to commit to the database.",
                       "",
-                      "Example:",
-                      "- [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK",
-                      "",
                       "Detected items:",
                   ]
                   for it in task_items:
@@ -511,9 +508,6 @@ jobs:
           if pairs and not (has_tasks and checked_count > 0):
               lines = [
                   "Detected attendance items. Please tick (check) the ones you want to commit to the database.",
-                  "",
-                  "Example:",
-                  "- [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK",
                   "",
                   "Detected items:",
               ]
