@@ -397,8 +397,14 @@ jobs:
                       '--method','POST','-f',f'body={comment}'
                   ], check=False)
                   sys.exit(0)
-              # Use only checked items
+              # Use only checked items and de-duplicate
               task_items_selected = [it for it in task_items if it.get('checked')]
+              uniq = {}
+              for it in task_items_selected:
+                  key = (it['slot'].strip(), (it.get('date') or ''), it['code'].strip().upper())
+                  if key not in uniq:
+                      uniq[key] = it
+              task_items_selected = list(uniq.values())
               pairs = []
               for it in task_items_selected:
                   pairs.append((it['slot'], it['code']))
@@ -639,9 +645,14 @@ jobs:
           )
           if 'task_items_selected' in locals() and task_items_selected:
               ok += ("\n\nSource: checked GitHub task list items. You can uncheck items to exclude them and re-run by editing the issue.")
-              # Show committed items for clarity
+              # Show committed items for clarity (deduplicated)
               ok += "\nCommitted items:"
+              seen = set()
               for it in task_items_selected:
+                  key = (it['slot'].strip(), (it.get('date') or ''), it['code'].strip().upper())
+                  if key in seen:
+                      continue
+                  seen.add(key)
                   if it.get('date'):
                       ok += f"\n- [x] {it['slot']}, {it['date']}, code {it['code']}"
                   else:
