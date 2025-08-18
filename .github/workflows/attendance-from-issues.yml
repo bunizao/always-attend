@@ -501,7 +501,30 @@ jobs:
                       week = w
                   gemini_used = True
 
-          
+          # If we have pairs but no explicit checked task list, ask user to confirm via checkboxes
+          if pairs and not (has_tasks and checked_count > 0):
+              lines = [
+                  "Detected attendance items. Please tick (check) the ones you want to commit to the database.",
+                  "",
+                  "Example:",
+                  "- [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK",
+                  "",
+                  "Detected items:",
+              ]
+              for slot, code in pairs:
+                  d = date_by_pair.get((slot, code)) if 'date_by_pair' in locals() else None
+                  if d:
+                      lines.append(f"- [ ] {slot}, {d}, code {code}")
+                  else:
+                      lines.append(f"- [ ] {slot}, code {code}")
+              lines.append("")
+              lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
+              comment = "\n".join(lines)
+              subprocess.run([
+                  'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
+                  '--method','POST','-f',f'body={comment}'
+              ], check=False)
+              sys.exit(0)
 
           # If still no pairs, ask user to provide proper text
           if not pairs:
