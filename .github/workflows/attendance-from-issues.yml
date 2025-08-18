@@ -341,35 +341,66 @@ jobs:
                   su = u.strip().strip('\"\'').rstrip(').,')
                   if su and su not in img_urls:
                       img_urls.append(su)
+
+              def try_fetch_image(url: str):
+                  """Fetch image bytes with fallbacks for GitHub user-attachments.
+
+                  1) Try with auth on GitHub domains.
+                  2) Retry without Authorization on failure.
+                  3) Retry with ?download=1 for direct CDN redirect.
+                  Returns (bytes, content_type) or (None, None).
+                  """
+                  headers_base = {"User-Agent": "always-attend-bot/1.0", "Accept": "*/*"}
+                  gh_token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
+                  is_gh = ("github.com" in url) or ("user-attachments" in url) or ("githubusercontent.com" in url)
+                  attempts = []
+                  if is_gh and gh_token:
+                      h = dict(headers_base)
+                      h["Authorization"] = f"Bearer {gh_token}"
+                      attempts.append((url, h))
+                  attempts.append((url, dict(headers_base)))
+                  if ("?" not in url) and is_gh:
+                      attempts.append((url + "?download=1", dict(headers_base)))
+                  last_err = None
+                  for u_try, h_try in attempts:
+                      try:
+                          req_try = urllib.request.Request(u_try, headers=h_try)
+                          with urllib.request.urlopen(req_try) as resp_try:
+                              data = resp_try.read()
+                              ctype = resp_try.info().get_content_type()
+                              return data, ctype
+                      except urllib.error.HTTPError as e:
+                          last_err = f"HTTP {e.code}"
+                      except Exception as e:
+                          last_err = str(e)
+                  if last_err:
+                      print(f"DEBUG: image fetch attempts failed for {url}: {last_err}")
+                  return None, None
+
               if img_urls:
                   if not gemini_api_key:
                       print("Image(s) found but no GEMINI_API_KEY set; skipping OCR.")
                   for url in img_urls:
                       try:
                           print(f"DEBUG: fetching image {url}")
-                          headers = {"User-Agent": "always-attend-bot/1.0", "Accept": "image/*"}
-                          gh_token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
-                          if gh_token and ("github.com" in url or "user-attachments" in url or "githubusercontent.com" in url):
-                              headers["Authorization"] = f"Bearer {gh_token}"
-                          req = urllib.request.Request(url, headers=headers)
-                          with urllib.request.urlopen(req) as resp:
-                              image_bytes = resp.read()
-                              content_type = resp.info().get_content_type()
-                              image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                              if gemini_api_key:
-                                  txt = call_gemini_api_with_image(gemini_api_key, image_b64, content_type)
-                                  if txt:
-                                      c, w, p = parse_extracted_json(txt)
-                                      print(f"DEBUG: gemini image JSON length={len(txt)} codes={len(p)}")
-                                      if p:
-                                          if not course:
-                                              course = c
-                                          if not week:
-                                              week = w
-                                          if not pairs:
-                                              pairs = p
-                              if pairs:
-                                  break
+                          image_bytes, content_type = try_fetch_image(url)
+                          if not image_bytes:
+                              raise RuntimeError("could not fetch image bytes")
+                          image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                          if gemini_api_key:
+                              txt = call_gemini_api_with_image(gemini_api_key, image_b64, content_type or 'image/png')
+                              if txt:
+                                  c, w, p = parse_extracted_json(txt)
+                                  print(f"DEBUG: gemini image JSON length={len(txt)} codes={len(p)}")
+                                  if p:
+                                      if not course:
+                                          course = c
+                                      if not week:
+                                          week = w
+                                      if not pairs:
+                                          pairs = p
+                          if pairs:
+                              break
                       except Exception as e:
                           print(f"Failed to process image at {url}: {e}")
 
