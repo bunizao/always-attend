@@ -104,7 +104,7 @@ async def get_enrolled_courses(page: Page) -> List[str]:
         return []
 
 
-def parse_codes(course_code: str, week_number: str) -> List[Dict[str, Optional[str]]]:
+def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = None) -> List[Dict[str, Optional[str]]]:
     CODES_FILE = os.getenv("CODES_FILE")
     CODES_URL = os.getenv("CODES_URL")
     CODES_BASE_URL = os.getenv("CODES_BASE_URL")
@@ -117,7 +117,8 @@ def parse_codes(course_code: str, week_number: str) -> List[Dict[str, Optional[s
         m = env_slot_re.match(var_name.upper())
         if m and var_value:
             slot_name = f"{m.group(1).capitalize()} {m.group(2)}"
-            result.append({"slot": slot_name, "date": None, "code": var_value.strip()})
+            # Omit date when unknown (avoid nulls in JSON)
+            result.append({"slot": slot_name, "code": var_value.strip()})
     if result:
         log_info(f"Loaded {len(result)} codes from per-slot environment variables")
         return result
@@ -185,7 +186,8 @@ def parse_codes(course_code: str, week_number: str) -> List[Dict[str, Optional[s
         for pair in pairs:
             if ':' in pair:
                 slot, code = pair.split(':', 1)
-                result.append({"slot": slot.strip(), "date": None, "code": code.strip()})
+                # Omit date when unknown
+                result.append({"slot": slot.strip(), "code": code.strip()})
         if result:
             log_info(f"Loaded {len(result)} codes from CODES inline")
     return result
@@ -540,16 +542,18 @@ async def run_submit(dry_run: bool = False) -> None:
                     if not code_val:
                         log_info(f"Skip entry without code: {item}")
                         continue
-                    if not date_str:
-                        log_err(f"Skip entry without date (required): {item}")
-                        continue
-                    # Validate date format and compute anchor
-                    try:
-                        anchor = format_anchor(date_str)
-                    except Exception:
-                        log_err(f"Skip entry with invalid date format (expect YYYY-MM-DD): {item}")
-                        continue
-                    log_step(f"Processing: date={date_str} (anchor={anchor}) slot={slot}")
+                    anchor = None
+                    if date_str:
+                        # Validate date format and compute anchor if provided
+                        try:
+                            anchor = format_anchor(date_str)
+                        except Exception:
+                            log_warn(f"Ignore invalid date format (expect YYYY-MM-DD), proceeding without date: {item}")
+                            date_str = None
+                    if date_str:
+                        log_step(f"Processing: date={date_str} (anchor={anchor}) slot={slot}")
+                    else:
+                        log_step(f"Processing: slot={slot} (no specific date)")
                     opened = await find_and_open_slot(page, base, date_str, slot)
                     if not opened:
                         log_warn(" -> Not found or already submitted; skipping")

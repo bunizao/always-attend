@@ -156,6 +156,41 @@ jobs:
                   i += 1
               return pairs
 
+          def parse_task_list(body_text: str):
+              """Parse GitHub task list items for attendance entries.
+
+              Accepts lines like:
+              - [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK
+              - [ ] Laboratory 07, Wed 2025-08-20 16:00 code Q6TJA
+
+              Returns (items, has_tasks, checked_count) where items is a list of
+              dicts: {slot, code, date}. Only checked items are returned.
+              """
+              items = []
+              has_tasks = False
+              checked_count = 0
+              for raw in body_text.splitlines():
+                  m = re.match(r"^\s*-\s*\[(?P<checked>[ xX])\]\s*(?P<rest>.+)$", raw)
+                  if not m:
+                      continue
+                  has_tasks = True
+                  checked = m.group('checked').lower() == 'x'
+                  rest = m.group('rest').strip()
+                  code_match = re.search(r"(?:\bcode\b[:\s]*|[ ,])([A-Za-z0-9]{4,12})\s*$", rest, flags=re.I)
+                  code_val = code_match.group(1).upper() if code_match else None
+                  date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", rest)
+                  date_val = date_match.group(1) if date_match else None
+                  slot_part = rest
+                  if date_match:
+                      slot_part = rest[:date_match.start()].rstrip(' ,')
+                  elif code_match:
+                      slot_part = rest[:code_match.start()].rstrip(' ,')
+                  slot_val = slot_part.split(',')[0].strip()
+                  if checked and slot_val and code_val:
+                      checked_count += 1
+                      items.append({'slot': slot_val, 'code': re.sub(r"[^A-Za-z0-9]+","", code_val).upper(), 'date': date_val})
+              return items, has_tasks, checked_count
+
           def call_gemini_api(api_key, issue_title, issue_body):
               prompt = f'''
               Task: From the GitHub Issue content below, extract the course code, week number (integer), and attendance codes.
@@ -328,6 +363,30 @@ jobs:
           course, week, pairs = parse_issue_form_text(aggregate_text)
 
           gemini_api_key = os.environ.get('GEMINI_API_KEY')
+          gemini_used = False
+          # Task list parsing with explicit user confirmation via checkboxes
+          task_items_selected = []
+          date_by_pair = {}
+          task_items, has_tasks, checked_count = parse_task_list(aggregate_text)
+          if has_tasks:
+              if checked_count == 0:
+                  comment = (
+                      "Task list detected. Please tick (check) the items you want to commit to the database.\n\n"
+                      "Example: `- [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK`\n\n"
+                      "After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON."
+                  )
+                  subprocess.run([
+                      'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
+                      '--method','POST','-f',f'body={comment}'
+                  ], check=False)
+                  sys.exit(0)
+              # Use only checked items
+              task_items_selected = task_items
+              pairs = []
+              for it in task_items_selected:
+                  pairs.append((it['slot'], it['code']))
+                  if it.get('date'):
+                      date_by_pair[(it['slot'], it['code'])] = it['date']
 
           # Image-first: try OCR on any attached images before text parsing
           if not pairs:
@@ -399,6 +458,7 @@ jobs:
                                           week = w
                                       if not pairs:
                                           pairs = p
+                                      gemini_used = True
                           if pairs:
                               break
                       except Exception as e:
@@ -422,6 +482,7 @@ jobs:
                       course = c
                   if not week and w:
                       week = w
+                  gemini_used = True
 
           
 
@@ -462,14 +523,21 @@ jobs:
             '--title', new_title
           ], check=False)
 
-          # Build JSON entries for codes
+          # Build JSON entries for codes (include date from task list when available)
           entries = []
-          for slot, code in pairs:
-            entries.append({
-              'slot': slot.strip(),
-              'date': None,
-              'code': code.strip().upper(),
-            })
+          if 'task_items_selected' in locals() and task_items_selected:
+            for it in task_items_selected:
+              item = {'slot': it['slot'].strip(), 'code': it['code'].strip().upper()}
+              if it.get('date'):
+                item['date'] = it['date']
+              entries.append(item)
+          else:
+            for slot, code in pairs:
+              item = {'slot': slot.strip(), 'code': code.strip().upper()}
+              d = date_by_pair.get((slot, code)) if 'date_by_pair' in locals() else None
+              if d:
+                item['date'] = d
+              entries.append(item)
 
           # File path under data/{course}/{week}.json
           safe_course = re.sub(r'[^A-Za-z0-9]+','', course).upper()
@@ -526,6 +594,12 @@ jobs:
             f"Raw URL: {raw}\n\n"
             f"The script can use this URL directly by setting `CODES_URL={raw}`."
           )
+          if 'task_items_selected' in locals() and task_items_selected:
+              ok += ("\n\nSource: checked GitHub task list items. You can uncheck items to exclude them and re-run by editing the issue.")
+          if gemini_used:
+              ok += ("\n\n"
+                     "Note: Parsed with Gemini 2.5 Flash — please double-check the course, week, and codes for accuracy. "
+                     "If anything looks wrong, edit the issue/comment and the workflow will regenerate the JSON.")
           
           if pr_url:
               ok += f"\n\nDirect push was blocked; opened PR: {pr_url}"
