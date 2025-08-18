@@ -181,7 +181,11 @@ jobs:
               
               api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
               
-              headers = {"Content-Type": "application/json"}
+              headers = {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": api_key,
+                  "User-Agent": "always-attend-bot/1.0"
+              }
               
               data = {
                   "contents": [{
@@ -230,7 +234,11 @@ jobs:
               
               api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
               
-              headers = {"Content-Type": "application/json"}
+              headers = {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": api_key,
+                  "User-Agent": "always-attend-bot/1.0"
+              }
               
               data = {
                   "contents": [{
@@ -323,13 +331,18 @@ jobs:
 
           # Image-first: try OCR on any attached images before text parsing
           if not pairs:
-              img_urls = re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', aggregate_text)
+              md_imgs = re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', aggregate_text)
+              plain_imgs = re.findall(r'(https?://[^\s)\]>\]]+\.(?:png|jpg|jpeg|webp|gif))', aggregate_text, flags=re.I)
+              gh_assets = re.findall(r'(https?://github\.com/[^\s)\]>\]]+/assets/[^\s)\]>\]]+)', aggregate_text)
+              img_urls = list(dict.fromkeys(md_imgs + plain_imgs + gh_assets))
               if img_urls:
                   if not gemini_api_key:
                       print("Image(s) found but no GEMINI_API_KEY set; skipping OCR.")
                   for url in img_urls:
                       try:
-                          with urllib.request.urlopen(url) as resp:
+                          print(f"DEBUG: fetching image {url}")
+                          req = urllib.request.Request(url, headers={"User-Agent": "always-attend-bot/1.0"})
+                          with urllib.request.urlopen(req) as resp:
                               image_bytes = resp.read()
                               content_type = resp.info().get_content_type()
                               image_b64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -337,6 +350,7 @@ jobs:
                                   txt = call_gemini_api_with_image(gemini_api_key, image_b64, content_type)
                                   if txt:
                                       c, w, p = parse_extracted_json(txt)
+                                      print(f"DEBUG: gemini image JSON length={len(txt)} codes={len(p)}")
                                       if p:
                                           if not course:
                                               course = c
@@ -360,6 +374,7 @@ jobs:
               txt = call_gemini_api(gemini_api_key, title, aggregate_text)
               if txt:
                   c, w, p = parse_extracted_json(txt)
+                  print(f"DEBUG: gemini text JSON length={len(txt)} codes={len(p)}")
                   if p and not pairs:
                       pairs = p
                   if not course and c:
