@@ -1,47 +1,7 @@
 [
   {
     "slot": "Workshop 01",
-    "date": null,
-    "code": "GGQQK"
-  },
-  {
-    "slot": "Workshop 02",
-    "date": null,
-    "code": "NT5VA"
-  },
-  {
-    "slot": "Laboratory 01",
-    "date": null,
-    "code": "MJWFU"
-  },
-  {
-    "slot": "Laboratory 02",
-    "date": null,
-    "code": "UMF22"
-  },
-  {
-    "slot": "Laboratory 03",
-    "date": null,
-    "code": "AN6Z5"
-  },
-  {
-    "slot": "Laboratory 07",
-    "date": null,
-    "code": "Q6TJA"
-  },
-  {
-    "slot": "Laboratory 04",
-    "date": null,
-    "code": "FE9KX"
-  },
-  {
-    "slot": "Laboratory 05",
-    "date": null,
-    "code": "8DZ3T"
-  },
-  {
-    "slot": "Laboratory 06",
-    "date": null,
-    "code": "3P638"
+    "code": "GGGQK",
+    "date": "2025-08-18"
   }
 ]
