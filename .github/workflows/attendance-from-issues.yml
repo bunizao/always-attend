@@ -116,36 +116,37 @@ jobs:
                       if not line:
                           continue
                       # Accept optional list markers and flexible spacing
-                      mm = re.match(r"^[-*+]?\s*([^:]+?)\s*:\s*([A-Za-z0-9]{4,12})\s*$", line)
+                      # Allow ASCII colon ':', full-width colon '：', hyphen '-', en dash '–', em dash '—'
+                      mm = re.match(r"^[-*+]?\s*([^:：\-–—]+?)\s*(?:[:：\-–—])\s*([A-Za-z0-9]{4,12})\s*$", line)
                       if mm:
                           slot, code = mm.group(1).strip(), mm.group(2).strip().upper()
                           pairs.append((slot, code))
               return course, week, pairs
 
           def call_gemini_api(api_key, issue_title, issue_body):
-              # Note: Using gemini-1.5-flash as gemini-2.5-flash is not a valid model at this time.
               prompt = f'''
-          From the following GitHub issue title and body, extract the course code, week number, and attendance codes.
-          - The course code is a 3-letter, 4-digit code (e.g., FIT1111).
-          - The week number is an integer.
-          - The attendance codes are pairs of a slot (e.g., "Workshop 1") and a code (e.g., "JZXBA").
+              Task: From the GitHub Issue content below, extract the course code, week number (integer), and attendance codes.
 
-          Return the result as a single, minified JSON object with no markdown formatting. The JSON object should have these keys: "course", "week", "codes".
-          - The "course" value should be a string.
-          - The "week" value should be an integer.
-          - The "codes" key should hold an array of objects, where each object has a "slot" and "code" key.
+              Rules and format:
+              - course: a 3-letter + 4-digit code (e.g., FIT1111).
+              - week: integer only (e.g., "Week 3" -> 3).
+              - codes: an array of objects, each with:
+                - slot: the row/group/session name (e.g., "Workshop 1", "Applied 2").
+                - code: the attendance code (alphanumeric only, uppercase).
+              - If the body describes a table and says the rightmost column is the code, parse rows accordingly: take the rightmost column as code, and the left-most descriptive column as slot. Ignore headers.
+              - If course or week is missing, set it to null. If no codes found, return [].
+              - Return a single, minified JSON object only (no Markdown or explanation).
 
-          If the course code or week number cannot be found, return null for those fields.
-          If no attendance codes can be found, return an empty array for the "codes" field.
+              Output JSON keys: "course", "week", "codes".
 
-          ---
-          Issue Title: {issue_title}
-          ---
-          Issue Body:
-          {issue_body}
-          '''
+              ---
+              Issue Title: {issue_title}
+              ---
+              Issue Body:
+              {issue_body}
+              '''
               
-              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
               
               headers = {"Content-Type": "application/json"}
               
@@ -178,21 +179,22 @@ jobs:
 
           def call_gemini_api_with_image(api_key, image_data, mime_type):
               prompt = '''
-              From the attached image, extract the course code, week number, and attendance codes.
-              The course code is a 3-letter, 4-digit code (e.g., FIT1111).
-              The week number is an integer.
-              The attendance codes are pairs of a slot (e.g., "Workshop 1") and a code (e.g., "JZXBA").
+              Task: Extract attendance data from the attached table screenshot and output strict JSON only.
 
-              Return the result as a single, minified JSON object with no markdown formatting. The JSON object should have these keys: "course", "week", "codes".
-              - The "course" value should be a string.
-              - The "week" value should be an integer.
-              - The "codes" key should hold an array of objects, where each object has a "slot" and "code" key.
+              Parsing rules (table-focused):
+              - Treat the rightmost column as the attendance code (code). Ignore similar text in other columns.
+              - For each row, set slot to the row's session/group/time label (usually a left-most descriptive column, e.g., "Workshop 1", "Applied 2", "Lab A").
+              - Set code to the value from the rightmost column (alphanumeric, uppercase). Ignore header, empty, or separator rows.
 
-              If the course code or week number cannot be found, return null for those fields.
-              If no attendance codes can be found, return an empty array for the "codes" field.
+              Other fields:
+              - course: extract a 3-letters + 4-digits code like FIT1111 if present; otherwise null.
+              - week: extract an integer week number if present; otherwise null.
+
+              Output requirements: return only minified JSON, no Markdown, no prose. Shape:
+              {"course": string|null, "week": integer|null, "codes": [{"slot": string, "code": string}]}
               '''
               
-              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
               
               headers = {"Content-Type": "application/json"}
               
