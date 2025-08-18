@@ -4,6 +4,10 @@ on:
   issues:
     types: [opened, edited]
   workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to process when running manually'
+        required: false
 
 permissions:
   contents: write
@@ -37,6 +41,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          DISPATCH_ISSUE_NUMBER: ${{ inputs.issue_number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           REPO: ${{ github.repository }}
@@ -46,10 +51,38 @@ jobs:
           python3 - << 'PY'
           import os, re, json, subprocess, sys, pathlib, urllib.request, base64
 
-          issue_no = int(os.environ['ISSUE_NUMBER'])
+          # Determine issue number from event (issues trigger) or manual input (workflow_dispatch)
+          issue_no_raw = os.environ.get('ISSUE_NUMBER') or ''
+          if not issue_no_raw.strip():
+              issue_no_raw = os.environ.get('DISPATCH_ISSUE_NUMBER') or ''
+          if not issue_no_raw.strip():
+              print('No issue number provided in event or inputs; exiting without changes.')
+              sys.exit(0)
+          issue_no = int(issue_no_raw)
+          repo = os.environ['REPO']
           title = os.environ.get('ISSUE_TITLE') or ''
           body = os.environ.get('ISSUE_BODY') or ''
-          repo = os.environ['REPO']
+          # If title/body are missing (e.g., workflow_dispatch), fetch them via API
+          if not title or not body:
+              gh_token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
+              api_path = f"https://api.github.com/repos/{repo}/issues/{issue_no}"
+              try:
+                  # Prefer gh if available
+                  out = subprocess.run(['gh','api', f'repos/{repo}/issues/{issue_no}'], capture_output=True, text=True, check=True)
+                  issue_json = json.loads(out.stdout)
+                  title = title or issue_json.get('title') or ''
+                  body = body or issue_json.get('body') or ''
+              except Exception:
+                  if gh_token:
+                      req = urllib.request.Request(api_path, headers={
+                          'Authorization': f'Bearer {gh_token}',
+                          'Accept': 'application/vnd.github+json',
+                          'User-Agent': 'attendance-bot'
+                      })
+                      with urllib.request.urlopen(req) as resp:
+                          issue_json = json.loads(resp.read().decode('utf-8'))
+                          title = title or issue_json.get('title') or ''
+                          body = body or issue_json.get('body') or ''
           target_branch = os.environ.get('TARGET_BRANCH','main')
 
           def parse_issue_form_text(body_text: str):
