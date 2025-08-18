@@ -377,23 +377,24 @@ jobs:
           task_items, has_tasks, checked_count = parse_task_list(aggregate_text)
           if has_tasks:
               if checked_count == 0:
-                  # Render a human-readable task list with unchecked boxes for the user to tick
-                  lines = [
-                      "Task list detected. Please tick (check) the items you want to commit to the database.",
-                      "",
-                      "Detected items:",
-                  ]
-                  for it in task_items:
-                      # Echo each detected line as an unchecked task so user can tick
-                      lines.append(f"- [ ] {it.get('rest', it['slot'] + ', code ' + it['code'])}")
-                  lines.append("")
-                  lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
-                  comment = "\n".join(lines)
-                  subprocess.run([
-                      'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
-                      '--method','POST','-f',f'body={comment}'
-                  ], check=False)
-                  sys.exit(0)
+                  if task_items:
+                      # Render a human-readable task list with unchecked boxes for the user to tick
+                      lines = [
+                          "Task list detected. Please tick (check) the items you want to commit to the database.",
+                          "",
+                          "Detected items:",
+                      ]
+                      for it in task_items:
+                          # Echo each detected line as an unchecked task so user can tick
+                          lines.append(f"- [ ] {it.get('rest', it['slot'] + ', code ' + it['code'])}")
+                      lines.append("")
+                      lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
+                      comment = "\n".join(lines)
+                      subprocess.run([
+                          'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
+                          '--method','POST','-f',f'body={comment}'
+                      ], check=False)
+                      sys.exit(0)
               # Use only checked items and de-duplicate
               task_items_selected = [it for it in task_items if it.get('checked')]
               uniq = {}
@@ -518,9 +519,7 @@ jobs:
                   else:
                       lines.append(f"- [ ] {slot}, code {code}")
               lines.append("")
-              if gemini_used:
-                  lines.append("Note: Extracted by Gemini 2.5 Flash — please double-check for accuracy before ticking.")
-                  lines.append("")
+              
               lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
               comment = "\n".join(lines)
               subprocess.run([
@@ -651,10 +650,7 @@ jobs:
                       ok += f"\n- [x] {it['slot']}, {it['date']}, code {it['code']}"
                   else:
                       ok += f"\n- [x] {it['slot']}, code {it['code']}"
-          if gemini_used:
-              ok += ("\n\n"
-                     "Note: Parsed with Gemini 2.5 Flash — please double-check the course, week, and codes for accuracy. "
-                     "If anything looks wrong, edit the issue/comment and the workflow will regenerate the JSON.")
+          
           
           if pr_url:
               ok += f"\n\nDirect push was blocked; opened PR: {pr_url}"
