@@ -164,7 +164,7 @@ jobs:
               - [ ] Laboratory 07, Wed 2025-08-20 16:00 code Q6TJA
 
               Returns (items, has_tasks, checked_count) where items is a list of
-              dicts: {slot, code, date}. Only checked items are returned.
+              dicts: {slot, code, date, checked, rest}. Includes both checked and unchecked.
               """
               items = []
               has_tasks = False
@@ -186,9 +186,16 @@ jobs:
                   elif code_match:
                       slot_part = rest[:code_match.start()].rstrip(' ,')
                   slot_val = slot_part.split(',')[0].strip()
-                  if checked and slot_val and code_val:
-                      checked_count += 1
-                      items.append({'slot': slot_val, 'code': re.sub(r"[^A-Za-z0-9]+","", code_val).upper(), 'date': date_val})
+                  if slot_val and code_val:
+                      if checked:
+                          checked_count += 1
+                      items.append({
+                          'slot': slot_val,
+                          'code': re.sub(r"[^A-Za-z0-9]+","", code_val).upper(),
+                          'date': date_val,
+                          'checked': checked,
+                          'rest': rest,
+                      })
               return items, has_tasks, checked_count
 
           def call_gemini_api(api_key, issue_title, issue_body):
@@ -370,18 +377,28 @@ jobs:
           task_items, has_tasks, checked_count = parse_task_list(aggregate_text)
           if has_tasks:
               if checked_count == 0:
-                  comment = (
-                      "Task list detected. Please tick (check) the items you want to commit to the database.\n\n"
-                      "Example: `- [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK`\n\n"
-                      "After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON."
-                  )
+                  # Render a human-readable task list with unchecked boxes for the user to tick
+                  lines = [
+                      "Task list detected. Please tick (check) the items you want to commit to the database.",
+                      "",
+                      "Example:",
+                      "- [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK",
+                      "",
+                      "Detected items:",
+                  ]
+                  for it in task_items:
+                      # Echo each detected line as an unchecked task so user can tick
+                      lines.append(f"- [ ] {it.get('rest', it['slot'] + ', code ' + it['code'])}")
+                  lines.append("")
+                  lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
+                  comment = "\n".join(lines)
                   subprocess.run([
                       'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
                       '--method','POST','-f',f'body={comment}'
                   ], check=False)
                   sys.exit(0)
               # Use only checked items
-              task_items_selected = task_items
+              task_items_selected = [it for it in task_items if it.get('checked')]
               pairs = []
               for it in task_items_selected:
                   pairs.append((it['slot'], it['code']))
