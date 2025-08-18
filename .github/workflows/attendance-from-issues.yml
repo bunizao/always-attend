@@ -518,6 +518,9 @@ jobs:
                   else:
                       lines.append(f"- [ ] {slot}, code {code}")
               lines.append("")
+              if gemini_used:
+                  lines.append("Note: Extracted by Gemini 2.5 Flash — please double-check for accuracy before ticking.")
+                  lines.append("")
               lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
               comment = "\n".join(lines)
               subprocess.run([
@@ -636,6 +639,13 @@ jobs:
           )
           if 'task_items_selected' in locals() and task_items_selected:
               ok += ("\n\nSource: checked GitHub task list items. You can uncheck items to exclude them and re-run by editing the issue.")
+              # Show committed items for clarity
+              ok += "\nCommitted items:"
+              for it in task_items_selected:
+                  if it.get('date'):
+                      ok += f"\n- [x] {it['slot']}, {it['date']}, code {it['code']}"
+                  else:
+                      ok += f"\n- [x] {it['slot']}, code {it['code']}"
           if gemini_used:
               ok += ("\n\n"
                      "Note: Parsed with Gemini 2.5 Flash — please double-check the course, week, and codes for accuracy. "
