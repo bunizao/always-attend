@@ -1,6 +1,7 @@
 name: Attendance Codes
 description: Submit weekly attendance codes for a course/week. You may also attach a screenshot.
 
+title: Attendance Codes Submission
 labels:
   - codes
 assignees: []
@@ -33,7 +34,7 @@ body:
     attributes:
       label: Attendance codes
       description: |
-        Provide one item per line in the following format:
+        Provide one item per line in the following format or *paste a screenshot* of the codes:
         - Workshop 1: JZXBA
         - Workshop 2: AJYV7
         - Applied 1: 6B7UF
