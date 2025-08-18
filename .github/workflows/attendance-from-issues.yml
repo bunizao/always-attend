@@ -149,7 +149,7 @@ If the course code or week number cannot be found, return null for those fields.
 If no attendance codes can be found, return an empty array for the "codes" field.
 '''
               
-              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
               
               headers = {"Content-Type": "application/json"}
               
