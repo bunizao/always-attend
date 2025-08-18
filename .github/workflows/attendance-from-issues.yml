@@ -8,6 +8,8 @@ on:
       issue_number:
         description: 'Issue number to process when running manually'
         required: false
+  issue_comment:
+    types: [created, edited]
 
 permissions:
   contents: write
@@ -40,16 +42,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           DISPATCH_ISSUE_NUMBER: ${{ inputs.issue_number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
           REPO: ${{ github.repository }}
           TARGET_BRANCH: main
         run: |
           set -euo pipefail
           python3 - << 'PY'
-          import os, re, json, subprocess, sys, pathlib, urllib.request, base64
+          import os, re, json, subprocess, sys, pathlib, urllib.request, base64, urllib.error, time
+          from concurrent.futures import ThreadPoolExecutor, as_completed
 
           # Determine issue number from event (issues trigger) or manual input (workflow_dispatch)
           issue_no_raw = os.environ.get('ISSUE_NUMBER') or ''
@@ -62,6 +67,7 @@ jobs:
           repo = os.environ['REPO']
           title = os.environ.get('ISSUE_TITLE') or ''
           body = os.environ.get('ISSUE_BODY') or ''
+          comment_body = os.environ.get('COMMENT_BODY') or ''
           # If title/body are missing (e.g., workflow_dispatch), fetch them via API
           if not title or not body:
               gh_token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
@@ -152,12 +158,13 @@ jobs:
               
               data = {
                   "contents": [{
+                      "role": "user",
                       "parts": [{
                           "text": prompt
                       }]
                   }],
                   "generationConfig": {
-                      "response_mime_type": "application/json",
+                      "responseMimeType": "application/json",
                   }
               }
               
@@ -200,18 +207,19 @@ jobs:
               
               data = {
                   "contents": [{
+                      "role": "user",
                       "parts": [
                           {"text": prompt},
                           {
-                              "inline_data": {
-                                  "mime_type": mime_type,
+                              "inlineData": {
+                                  "mimeType": mime_type,
                                   "data": image_data
                               }
                           }
                       ]
                   }],
                   "generationConfig": {
-                      "response_mime_type": "application/json",
+                      "responseMimeType": "application/json",
                   }
               }
               
@@ -227,35 +235,199 @@ jobs:
                   print(f"Gemini API request failed with status: {e.code}")
                   print(e.read().decode())
                   return None
+
+          def call_openai_api(api_key, prompt):
+              url = "https://api.openai.com/v1/chat/completions"
+              headers = {
+                  "Authorization": f"Bearer {api_key}",
+                  "Content-Type": "application/json",
+              }
+              body = {
+                  "model": "gpt-4o-mini",
+                  "response_format": {"type": "json_object"},
+                  "messages": [
+                      {"role": "system", "content": "You are a precise extractor. Only output minified JSON with keys course, week, codes."},
+                      {"role": "user", "content": prompt},
+                  ],
+              }
+              req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers=headers)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      if resp.status == 200:
+                          out = json.loads(resp.read().decode("utf-8"))
+                          return out["choices"][0]["message"]["content"]
+              except urllib.error.HTTPError as e:
+                  print("OpenAI text request failed:", e.code, e.read().decode())
+              except Exception as e:
+                  print("OpenAI text error:", e)
+              return None
+
+          def call_openai_api_with_image(api_key, prompt, image_b64, mime_type):
+              url = "https://api.openai.com/v1/chat/completions"
+              headers = {
+                  "Authorization": f"Bearer {api_key}",
+                  "Content-Type": "application/json",
+              }
+              data_uri = f"data:{mime_type};base64,{image_b64}"
+              body = {
+                  "model": "gpt-4o-mini",
+                  "response_format": {"type": "json_object"},
+                  "messages": [
+                      {"role": "system", "content": "You are a precise extractor. Only output minified JSON with keys course, week, codes."},
+                      {
+                          "role": "user",
+                          "content": [
+                              {"type": "text", "text": prompt},
+                              {"type": "image_url", "image_url": {"url": data_uri}},
+                          ],
+                      },
+                  ],
+              }
+              req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers=headers)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      if resp.status == 200:
+                          out = json.loads(resp.read().decode("utf-8"))
+                          return out["choices"][0]["message"]["content"]
+              except urllib.error.HTTPError as e:
+                  print("OpenAI image request failed:", e.code, e.read().decode())
+              except Exception as e:
+                  print("OpenAI image error:", e)
+              return None
+
+          def parse_extracted_json(text):
+              try:
+                  data = json.loads(text)
+              except Exception:
+                  return None, None, []
+              course = data.get("course")
+              week_val = data.get("week")
+              week = str(week_val) if (isinstance(week_val, int) or (isinstance(week_val, str) and week_val.strip())) else None
+              pairs = []
+              for item in data.get("codes") or []:
+                  slot = (item.get("slot") or "").strip()
+                  code = (item.get("code") or "").strip().upper()
+                  if slot and code:
+                      pairs.append((slot, code))
+              return course, week, pairs
               except Exception as e:
                   print(f"An unexpected error occurred: {e}")
                   return None
 
+          # Aggregate text: issue body + latest comment (if present) for parsing
+          aggregate_text = body
+          if comment_body:
+              aggregate_text += "\n\n" + comment_body
+
           # First, try deterministic parsing from the Issue Form
-          course, week, pairs = parse_issue_form_text(body)
+          course, week, pairs = parse_issue_form_text(aggregate_text)
 
           gemini_api_key = os.environ.get('GEMINI_API_KEY')
+          openai_api_key = os.environ.get('OPENAI_API_KEY')
+          ai_text_summary = ''
+          ai_image_summary = ''
+
+          # Image-first: try OCR on any attached images before text parsing
+          if not pairs:
+              img_urls = re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', aggregate_text)
+              if img_urls:
+                  if not (gemini_api_key or openai_api_key):
+                      print("Image(s) found but no AI keys set; skipping OCR.")
+                  for url in img_urls:
+                      try:
+                          with urllib.request.urlopen(url) as resp:
+                              image_bytes = resp.read()
+                              content_type = resp.info().get_content_type()
+                              image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                              calls = []
+                              if gemini_api_key:
+                                  calls.append(("gemini", lambda: call_gemini_api_with_image(gemini_api_key, image_b64, content_type)))
+                              if openai_api_key:
+                                  calls.append(("openai", lambda: call_openai_api_with_image(openai_api_key,
+                                      "Task: Extract attendance from the table screenshot. Rightmost column is the code; slot is the left-most descriptive column. Return minified JSON with keys course, week, codes.", image_b64, content_type)))
+                              img_results = {}
+                              with ThreadPoolExecutor(max_workers=len(calls) or 1) as ex:
+                                  fut_map = {ex.submit(fn): name for name, fn in calls}
+                                  for fut in as_completed(fut_map):
+                                      name = fut_map[fut]
+                                      try:
+                                          txt = fut.result()
+                                      except Exception as e:
+                                          print(f"{name} image error: {e}")
+                                          txt = None
+                                      if txt:
+                                          c, w, p = parse_extracted_json(txt)
+                                          img_results[name] = {"course": c, "week": w, "pairs": p, "raw": txt}
+                              if img_results:
+                                  ai_image_summary = ", ".join([f"{k}:{len(v['pairs'])}" for k,v in img_results.items()])
+                                  best_img = max(img_results.items(), key=lambda kv: (len(kv[1]["pairs"]), 1 if kv[0]=="gemini" else 0))
+                                  provider, data_best = best_img
+                                  if data_best["pairs"]:
+                                      if not course:
+                                          course = data_best["course"]
+                                      if not week:
+                                          week = data_best["week"]
+                                      if not pairs:
+                                          pairs = data_best["pairs"]
+                              if pairs:
+                                  break
+                      except Exception as e:
+                          print(f"Failed to process image at {url}: {e}")
 
           # If still missing, optionally try Gemini on text
-          if (not course or not week or not pairs) and gemini_api_key:
-              extracted_data_json = call_gemini_api(gemini_api_key, title, body)
-              if extracted_data_json:
-                  try:
-                      extracted_data = json.loads(extracted_data_json)
-                      course = course or extracted_data.get("course")
-                      week = week or (str(extracted_data.get("week")) if extracted_data.get("week") else None)
-                      if not pairs and extracted_data.get("codes"):
-                          for item in extracted_data.get("codes"):
-                              pairs.append((item.get("slot"), item.get("code")))
-                  except json.JSONDecodeError:
-                      print("Failed to decode JSON from Gemini text response.")
+          if (not course or not week or not pairs) and (gemini_api_key or openai_api_key):
+              prompts = {
+                  "gemini": (lambda: call_gemini_api(gemini_api_key, title, body)) if gemini_api_key else None,
+                  "openai": (lambda: call_openai_api(openai_api_key, (
+                      "Task: From the GitHub Issue content below, extract the course code, week number (integer), and attendance codes.\n\n"
+                      "Rules and format:\n"
+                      "- course: a 3-letter + 4-digit code (e.g., FIT1111).\n"
+                      "- week: integer only (e.g., \"Week 3\" -> 3).\n"
+                      "- codes: array of {slot, code}; code alphanumeric uppercase.\n"
+                      "- If the body describes a table with rightmost column as code, use rightmost column as code and a left-most descriptive column as slot; ignore headers.\n"
+                      "- If course/week missing, set null; if no codes, return [].\n"
+                      "- Return a single minified JSON only.\n\n"
+                      f"---\nIssue Title: {title}\n---\nIssue Body:\n{body}\n"
+                  ))) if openai_api_key else None,
+              }
+              results = {}
+              with ThreadPoolExecutor(max_workers=2) as ex:
+                  fut_map = {}
+                  for name, fn in prompts.items():
+                      if fn:
+                          fut = ex.submit(fn)
+                          fut_map[fut] = name
+                  for fut in as_completed(fut_map):
+                      name = fut_map[fut]
+                      try:
+                          txt = fut.result()
+                      except Exception as e:
+                          print(f"{name} text error: {e}")
+                          txt = None
+                      if txt:
+                          c, w, p = parse_extracted_json(txt)
+                          results[name] = {"course": c, "week": w, "pairs": p, "raw": txt}
+              # choose best
+              best = None
+              if results:
+                  ai_text_summary = ", ".join([f"{k}:{len(v['pairs'])}" for k,v in results.items()])
+                  # Prefer provider with more codes; tie-breaker prefer gemini
+                  best = max(results.items(), key=lambda kv: (len(kv[1]["pairs"]), 1 if kv[0]=="gemini" else 0))
+                  provider, data_best = best
+                  if data_best["pairs"]:
+                      if not course:
+                          course = data_best["course"]
+                      if not week:
+                          week = data_best["week"]
+                      if not pairs:
+                          pairs = data_best["pairs"]
 
-          # If still no pairs, try image OCR via Gemini (if key present)
-          if not pairs:
+          # Image block already attempted above; keep this disabled to avoid duplicate work
+          if False and not pairs:
               img_urls = re.findall(r'!\[[^\]]*\]\((https?://[^)]+)\)', body)
               if img_urls:
-                  if not gemini_api_key:
-                      print("Image(s) found but GEMINI_API_KEY not set; skipping OCR.")
+                  if not (gemini_api_key or openai_api_key):
+                      print("Image(s) found but no AI keys set; skipping OCR.")
                   
                   for url in img_urls:
                       try:
@@ -263,21 +435,44 @@ jobs:
                               image_bytes = resp.read()
                               content_type = resp.info().get_content_type()
                               image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                              if not gemini_api_key:
-                                  continue
-                              extracted_data_json = call_gemini_api_with_image(gemini_api_key, image_b64, content_type)
-                              if extracted_data_json:
-                                  extracted_data = json.loads(extracted_data_json)
-                                  course = course or extracted_data.get("course")
-                                  week = week or (str(extracted_data.get("week")) if extracted_data.get("week") else None)
-                                  if not pairs and extracted_data.get("codes"):
-                                      for item in extracted_data.get("codes"):
-                                          pairs.append((item.get("slot"), item.get("code")))
-                                  # If we got something from the first image, we can stop.
-                                  if pairs:
-                                      break
+                              calls = []
+                              if gemini_api_key:
+                                  calls.append(("gemini", lambda: call_gemini_api_with_image(gemini_api_key, image_b64, content_type)))
+                              if openai_api_key:
+                                  calls.append(("openai", lambda: call_openai_api_with_image(openai_api_key, \
+                                      "Task: Extract attendance from the table screenshot. Rightmost column is the code; slot is the left-most descriptive column. Return minified JSON with keys course, week, codes.", image_b64, content_type)))
+                              img_results = {}
+                              with ThreadPoolExecutor(max_workers=len(calls) or 1) as ex:
+                                  fut_map = {ex.submit(fn): name for name, fn in calls}
+                                  for fut in as_completed(fut_map):
+                                      name = fut_map[fut]
+                                      try:
+                                          txt = fut.result()
+                                      except Exception as e:
+                                          print(f"{name} image error: {e}")
+                                          txt = None
+                                      if txt:
+                                          c, w, p = parse_extracted_json(txt)
+                                          img_results[name] = {"course": c, "week": w, "pairs": p, "raw": txt}
+                              if img_results:
+                                  ai_image_summary = ", ".join([f"{k}:{len(v['pairs'])}" for k,v in img_results.items()])
+                                  best_img = max(img_results.items(), key=lambda kv: (len(kv[1]["pairs"]), 1 if kv[0]=="gemini" else 0))
+                                  provider, data_best = best_img
+                                  if data_best["pairs"]:
+                                      if not course:
+                                          course = data_best["course"]
+                                      if not week:
+                                          week = data_best["week"]
+                                      if not pairs:
+                                          pairs = data_best["pairs"]
+                              if pairs:
+                                  break
                       except Exception as e:
                           print(f"Failed to process image at {url}: {e}")
+
+          # Optional: brief comparison comment if both providers returned results
+          def summarize(ai_results):
+              return ", ".join([f"{k}: {len(v['pairs'])} codes" for k,v in ai_results.items()]) if ai_results else ""
 
           # If still no pairs, ask user to provide proper text
           if not pairs:
@@ -286,6 +481,8 @@ jobs:
               "Please provide the codes in the issue body in the following format, or upload a clearer screenshot:\n\n"
               "```\nWorkshop 1: JZXBA\nWorkshop 2: AJYV7\nApplied 1: 6B7UF\n...\n```\n\nAlso, please specify the following in the body:\n\n- Course code (e.g., FIT1111)\n- Week number (e.g., Week 3)\n\nThe workflow will automatically retry after the issue is updated."
             )
+            if img_urls and not (gemini_api_key or openai_api_key):
+              comment += "\n\nNote: A screenshot was detected, but OCR is disabled because `GEMINI_API_KEY`/`OPENAI_API_KEY` secrets are not set in this repository."
             subprocess.run([
               'gh','api',
               f'repos/{repo}/issues/{issue_no}/comments',
@@ -380,6 +577,8 @@ jobs:
             f"Raw URL: {raw}\n\n"
             f"The script can use this URL directly by setting `CODES_URL={raw}`."
           )
+          if ai_text_summary or ai_image_summary:
+              ok += "\n\nAI parsing summary: " + "; ".join(filter(None, [f"text[{ai_text_summary}]" if ai_text_summary else '', f"image[{ai_image_summary}]" if ai_image_summary else '']))
           if pr_url:
               ok += f"\n\nDirect push was blocked; opened PR: {pr_url}"
           subprocess.run([
