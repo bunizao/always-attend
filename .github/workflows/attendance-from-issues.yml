@@ -3,6 +3,7 @@ name: Build attendance codes from issues
 on:
   issues:
     types: [opened, edited]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,6 +16,15 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Verify tooling
+        run: |
+          set -euo pipefail
+          git --version
+          gh --version || echo "gh CLI not found"
 
       - name: Set up Python
         uses: actions/setup-python@v5
