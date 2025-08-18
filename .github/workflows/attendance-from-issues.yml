@@ -127,6 +127,35 @@ jobs:
                           pairs.append((slot, code))
               return course, week, pairs
 
+          def parse_markdown_table(body_text: str):
+              """Parse simple Markdown tables and take rightmost column as code.
+
+              Returns pairs list.
+              """
+              pairs = []
+              lines = [ln.rstrip() for ln in body_text.splitlines()]
+              # Find table blocks: look for a header with '|' and a separator with dashes
+              i = 0
+              while i < len(lines):
+                  if '|' in lines[i]:
+                      header = lines[i]
+                      if i + 1 < len(lines) and re.search(r"\|\s*-{2,}", lines[i+1]):
+                          j = i + 2
+                          while j < len(lines) and '|' in lines[j] and lines[j].strip().startswith('|') or '|' in lines[j]:
+                              row = lines[j]
+                              cols = [c.strip() for c in row.strip().strip('|').split('|')]
+                              if len(cols) >= 2:
+                                  code = re.sub(r"[^A-Za-z0-9]+", "", cols[-1]).upper()
+                                  # pick first non-empty as slot
+                                  slot = next((c for c in cols if c), '')
+                                  if slot and code:
+                                      pairs.append((slot, code))
+                              j += 1
+                          i = j
+                          continue
+                  i += 1
+              return pairs
+
           def call_gemini_api(api_key, issue_title, issue_body):
               prompt = f'''
               Task: From the GitHub Issue content below, extract the course code, week number (integer), and attendance codes.
@@ -237,19 +266,49 @@ jobs:
           
 
           def parse_extracted_json(text):
+              # Accept raw JSON, fenced code blocks, or JSON embedded in prose
+              s = (text or '').strip()
+              # Strip common code fences
+              if s.startswith('```'):
+                  s = s.strip('`')
+                  # remove possible language hint
+                  s = re.sub(r"^json\n", "", s, flags=re.I)
+              # Try direct JSON
               try:
-                  data = json.loads(text)
+                  data = json.loads(s)
               except Exception:
-                  return None, None, []
+                  # Fallback: find the first JSON object in text
+                  m = re.search(r"\{[\s\S]*\}", s)
+                  if not m:
+                      return None, None, []
+                  try:
+                      data = json.loads(m.group(0))
+                  except Exception:
+                      return None, None, []
               course = data.get("course")
               week_val = data.get("week")
               week = str(week_val) if (isinstance(week_val, int) or (isinstance(week_val, str) and week_val.strip())) else None
               pairs = []
-              for item in data.get("codes") or []:
-                  slot = (item.get("slot") or "").strip()
-                  code = (item.get("code") or "").strip().upper()
-                  if slot and code:
-                      pairs.append((slot, code))
+              codes = data.get("codes")
+              if isinstance(codes, dict):
+                  for k, v in codes.items():
+                      slot = str(k).strip()
+                      code = re.sub(r"[^A-Za-z0-9]+", "", str(v)).upper()
+                      if slot and code:
+                          pairs.append((slot, code))
+              elif isinstance(codes, list):
+                  for item in codes:
+                      if isinstance(item, dict):
+                          slot = (item.get("slot") or item.get("name") or item.get("label") or "").strip()
+                          code = (item.get("code") or item.get("value") or "").strip().upper()
+                          code = re.sub(r"[^A-Za-z0-9]+", "", code)
+                          if slot and code:
+                              pairs.append((slot, code))
+                      elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                          slot = str(item[0]).strip()
+                          code = re.sub(r"[^A-Za-z0-9]+", "", str(item[-1])).upper()
+                          if slot and code:
+                              pairs.append((slot, code))
               return course, week, pairs
 
           # Aggregate text: issue body + latest comment (if present) for parsing
@@ -289,6 +348,12 @@ jobs:
                                   break
                       except Exception as e:
                           print(f"Failed to process image at {url}: {e}")
+
+          # If still missing, try deterministic Markdown table parsing
+          if not pairs:
+              md_pairs = parse_markdown_table(aggregate_text)
+              if md_pairs:
+                  pairs = md_pairs
 
           # If still missing, optionally try Gemini on text
           if (not course or not week or not pairs) and gemini_api_key:
