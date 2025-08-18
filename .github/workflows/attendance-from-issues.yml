@@ -92,25 +92,25 @@ jobs:
           def call_gemini_api(api_key, issue_title, issue_body):
               # Note: Using gemini-1.5-flash as gemini-2.5-flash is not a valid model at this time.
               prompt = f'''
-From the following GitHub issue title and body, extract the course code, week number, and attendance codes.
-- The course code is a 3-letter, 4-digit code (e.g., FIT1111).
-- The week number is an integer.
-- The attendance codes are pairs of a slot (e.g., "Workshop 1") and a code (e.g., "JZXBA").
+          From the following GitHub issue title and body, extract the course code, week number, and attendance codes.
+          - The course code is a 3-letter, 4-digit code (e.g., FIT1111).
+          - The week number is an integer.
+          - The attendance codes are pairs of a slot (e.g., "Workshop 1") and a code (e.g., "JZXBA").
 
-Return the result as a single, minified JSON object with no markdown formatting. The JSON object should have these keys: "course", "week", "codes".
-- The "course" value should be a string.
-- The "week" value should be an integer.
-- The "codes" key should hold an array of objects, where each object has a "slot" and "code" key.
+          Return the result as a single, minified JSON object with no markdown formatting. The JSON object should have these keys: "course", "week", "codes".
+          - The "course" value should be a string.
+          - The "week" value should be an integer.
+          - The "codes" key should hold an array of objects, where each object has a "slot" and "code" key.
 
-If the course code or week number cannot be found, return null for those fields.
-If no attendance codes can be found, return an empty array for the "codes" field.
+          If the course code or week number cannot be found, return null for those fields.
+          If no attendance codes can be found, return an empty array for the "codes" field.
 
----
-Issue Title: {issue_title}
----
-Issue Body:
-{issue_body}
-'''
+          ---
+          Issue Title: {issue_title}
+          ---
+          Issue Body:
+          {issue_body}
+          '''
               
               api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
               
@@ -145,21 +145,21 @@ Issue Body:
 
           def call_gemini_api_with_image(api_key, image_data, mime_type):
               prompt = '''
-From the attached image, extract the course code, week number, and attendance codes.
-The course code is a 3-letter, 4-digit code (e.g., FIT1111).
-The week number is an integer.
-The attendance codes are pairs of a slot (e.g., "Workshop 1") and a code (e.g., "JZXBA").
+              From the attached image, extract the course code, week number, and attendance codes.
+              The course code is a 3-letter, 4-digit code (e.g., FIT1111).
+              The week number is an integer.
+              The attendance codes are pairs of a slot (e.g., "Workshop 1") and a code (e.g., "JZXBA").
 
-Return the result as a single, minified JSON object with no markdown formatting. The JSON object should have these keys: "course", "week", "codes".
-- The "course" value should be a string.
-- The "week" value should be an integer.
-- The "codes" key should hold an array of objects, where each object has a "slot" and "code" key.
+              Return the result as a single, minified JSON object with no markdown formatting. The JSON object should have these keys: "course", "week", "codes".
+              - The "course" value should be a string.
+              - The "week" value should be an integer.
+              - The "codes" key should hold an array of objects, where each object has a "slot" and "code" key.
 
-If the course code or week number cannot be found, return null for those fields.
-If no attendance codes can be found, return an empty array for the "codes" field.
-'''
+              If the course code or week number cannot be found, return null for those fields.
+              If no attendance codes can be found, return an empty array for the "codes" field.
+              '''
               
-              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
               
               headers = {"Content-Type": "application/json"}
               
