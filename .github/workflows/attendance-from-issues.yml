@@ -473,15 +473,12 @@ jobs:
                                   c, w, p = parse_extracted_json(txt)
                                   print(f"DEBUG: gemini image JSON length={len(txt)} codes={len(p)}")
                                   if p:
-                                      if not course:
+                                      if not course and c:
                                           course = c
-                                      if not week:
+                                      if not week and w:
                                           week = w
-                                      if not pairs:
-                                          pairs = p
+                                      pairs.extend(p)
                                       gemini_used = True
-                          if pairs:
-                              break
                       except Exception as e:
                           print(f"Failed to process image at {url}: {e}")
 
