@@ -186,11 +186,7 @@ jobs:
               }
               
               data = {
-                  "contents": [{
-                      "parts": [{
-                          "text": prompt
-                      }]
-                  }],
+                  "contents": [{"parts": [{"text": prompt}]}],
                   "generationConfig": {
                       "response_mime_type": "application/json",
                   }
@@ -236,17 +232,7 @@ jobs:
               }
               
               data = {
-                  "contents": [{
-                      "parts": [
-                          {"text": prompt},
-                          {
-                              "inline_data": {
-                                  "mime_type": mime_type,
-                                  "data": image_data
-                              }
-                          }
-                      ]
-                  }],
+                  "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": image_data}}] }],
                   "generationConfig": {
                       "response_mime_type": "application/json",
                   }
@@ -418,7 +404,8 @@ jobs:
           def is_confirmation_box_checked(body_text: str):
               """Checks if the confirmation checkbox is ticked in the text."""
               for raw in body_text.splitlines():
-                  m = re.match(r"^\s*-\s*\[(?P<checked>[xX])\]\s*(?P<rest>.+)$", raw)
+                  m = re.match(r"^\s*-\s*\[(?P<checked>[xX])\]\s*(?P<rest>.+)$
+", raw)
                   if m and "i confirm i want to commit these codes" in m.group('rest').lower():
                       return True
               return False
