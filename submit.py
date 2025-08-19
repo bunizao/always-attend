@@ -220,7 +220,6 @@ async def maybe_switch_to_code_factor(page: Page) -> None:
         'text=/Enter a code/i',
         'text=/Google Authenticator|Authenticator app/i',
         'text=/Okta Verify/i',
-        'text=/验证码/',
     ]
     await click_first_match(page, candidates)
 
@@ -254,11 +253,11 @@ async def login(page: Page) -> None:
     pass_ok = await fill_first_match(page, [
         'input[name="password"]','input[autocomplete="current-password"]','input[type="password"]','input[placeholder*="pass" i]','#okta-signin-password'], os.getenv("PASSWORD"))
     if user_ok and not pass_ok:
-        await click_first_match(page, ['button[type="submit"]','button:has-text("Next")','button:has-text("Continue")','text=/继续|下一步/i'])
+        await click_first_match(page, ['button[type="submit"]','button:has-text("Next")','button:has-text("Continue")'])
         pass_ok = await fill_first_match(page, [
             'input[name="password"]','input[autocomplete="current-password"]','input[type="password"]','input[placeholder*="pass" i]'], os.getenv("PASSWORD"))
 
-    await click_first_match(page, ['button[type="submit"]','input[type="submit"]','button:has-text("Sign in")','button:has-text("Log in")','text=/登录|登入/i','#okta-signin-submit'])
+    await click_first_match(page, ['button[type="submit"]','input[type="submit"]','button:has-text("Sign in")','button:has-text("Log in")','#okta-signin-submit'])
     await maybe_switch_to_code_factor(page)
 
     otp = None
@@ -286,7 +285,7 @@ async def login(page: Page) -> None:
     if not otp_ok:
         raise RuntimeError("Cannot locate OTP input")
 
-    await click_first_match(page, ['button[type="submit"]','input[type="submit"]','button:has-text("Verify")','text=/验证|提交/i'])
+    await click_first_match(page, ['button[type="submit"]','input[type="submit"]','button:has-text("Verify")'])
     try:
         await page.wait_for_load_state("domcontentloaded", timeout=30_000)
     except PwTimeout:
@@ -404,9 +403,9 @@ async def find_and_open_slot(page: Page, base_url: str, date_str: Optional[str],
 
 
 ERROR_HINT_SELECTORS = [
-    'text=/invalid code/i','text=/incorrect code/i','text=/wrong code/i','text=/expired/i','text=/not valid/i','text=/无效|错误|过期/'
+    'text=/invalid code/i','text=/incorrect code/i','text=/wrong code/i','text=/expired/i','text=/not valid/i'
 ]
-SUCCESS_HINT_SELECTORS = ['text=/success/i','text=/submitted/i','text=/已提交|成功/']
+SUCCESS_HINT_SELECTORS = ['text=/success/i','text=/submitted/i']
 
 
 async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
@@ -415,12 +414,12 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
         'input[name="code"]','input[id*="code" i]','input[placeholder*="code" i]','input[type="text"]'], code)
     if not filled:
         return False, "Cannot locate code input"
-    await click_first_match(page, ['button[type="submit"]','input[type="submit"]','button:has-text("Submit")','text=/提交|确认/i'])
+    await click_first_match(page, ['button[type="submit"]','input[type="submit"]','button:has-text("Submit")'])
     await page.wait_for_timeout(1500)
     for sel in ERROR_HINT_SELECTORS:
         try:
             if await page.locator(sel).first.is_visible():
-                return False, "可能是错误或过期的 code"
+                return False, "Possibly wrong or expired code"
         except Exception:
             continue
     for sel in SUCCESS_HINT_SELECTORS:

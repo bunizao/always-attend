@@ -146,8 +146,8 @@ jobs:
                               cols = [c.strip() for c in row.strip().strip('|').split('|')]
                               if len(cols) >= 2:
                                   code = re.sub(r"[^A-Za-z0-9]+", "", cols[-1]).upper()
-                                  # pick first non-empty as slot
-                                  slot = next((c for c in cols if c), '')
+                                  # pick first non-empty as slot and normalize
+                                  slot = normalize_slot(next((c for c in cols if c), ''))
                                   if slot and code:
                                       pairs.append((slot, code))
                               j += 1
@@ -185,7 +185,8 @@ jobs:
                       slot_part = rest[:date_match.start()].rstrip(' ,')
                   elif code_match:
                       slot_part = rest[:code_match.start()].rstrip(' ,')
-                  slot_val = slot_part.split(',')[0].strip()
+                  # Normalize to canonical slot label (e.g., 'Workshop 03')
+                  slot_val = normalize_slot(slot_part)
                   if slot_val and code_val:
                       if checked:
                           checked_count += 1
@@ -206,9 +207,11 @@ jobs:
               - course: a 3-letter + 4-digit code (e.g., FIT1111).
               - week: integer only (e.g., "Week 3" -> 3).
               - codes: an array of objects, each with:
-                - slot: the row/group/session name (e.g., "Workshop 1", "Applied 2").
+                - slot: ONLY the canonical session label without weekday/time/date. Format examples:
+                  "Workshop 03", "Applied 02", "Applied 02-P1", "Lab 07".
+                  Do NOT include weekday (e.g., Tuesday), dates (e.g., 19 Aug), or times.
                 - code: the attendance code (alphanumeric only, uppercase).
-              - If the body describes a table and says the rightmost column is the code, parse rows accordingly: take the rightmost column as code, and the left-most descriptive column as slot. Ignore headers.
+              - If the body describes a table and says the rightmost column is the code, parse rows accordingly: take the rightmost column as code, and the left-most descriptive column as slot, then normalize slot to the canonical form above.
               - If course or week is missing, set it to null. If no codes found, return [].
               - Return a single, minified JSON object only (no Markdown or explanation).
 
@@ -263,7 +266,8 @@ jobs:
 
               Parsing rules (table-focused):
               - Treat the rightmost column as the attendance code (code). Ignore similar text in other columns.
-              - For each row, set slot to the row's session/group/time label (usually a left-most descriptive column, e.g., "Workshop 1", "Applied 2", "Lab A").
+              - For each row, set slot to ONLY the canonical session label without weekday/time/date. Examples:
+                "Workshop 03", "Applied 02", "Applied 02-P1", "Lab 07".
               - Set code to the value from the rightmost column (alphanumeric, uppercase). Ignore header, empty, or separator rows.
 
               Other fields:
@@ -315,6 +319,32 @@ jobs:
 
           
 
+          def normalize_slot(label: str):
+              """Normalize a noisy label into canonical form like:
+              'Workshop 03', 'Applied 02', 'Applied 02-P1', 'Lab 07'.
+              Drops weekday/time/date fragments.
+              """
+              s = (label or '').strip()
+              if not s:
+                  return s
+              m = re.search(r"(?i)\b(Workshop|Applied|Laboratory|Lab|Lecture|Tutorial)\b", s)
+              if not m:
+                  return s
+              kind = m.group(1).title()
+              if kind == 'Laboratory':
+                  kind = 'Lab'
+              # Search number and optional -P# suffix somewhere after the kind
+              tail = s[m.end():]
+              m2 = re.search(r"(?i)0*(\d{1,2})(?:\s*[-_ ]*P?0*(\d{1,2}))?", tail)
+              if not m2:
+                  return f"{kind}"
+              n = int(m2.group(1))
+              p = m2.group(2)
+              slot = f"{kind} {n:02d}"
+              if p:
+                  slot += f"-P{int(p)}"
+              return slot
+
           def parse_extracted_json(text):
               # Accept raw JSON, fenced code blocks, or JSON embedded in prose
               s = (text or '').strip()
@@ -342,20 +372,20 @@ jobs:
               codes = data.get("codes")
               if isinstance(codes, dict):
                   for k, v in codes.items():
-                      slot = str(k).strip()
+                      slot = normalize_slot(str(k).strip())
                       code = re.sub(r"[^A-Za-z0-9]+", "", str(v)).upper()
                       if slot and code:
                           pairs.append((slot, code))
               elif isinstance(codes, list):
                   for item in codes:
                       if isinstance(item, dict):
-                          slot = (item.get("slot") or item.get("name") or item.get("label") or "").strip()
+                          slot = normalize_slot((item.get("slot") or item.get("name") or item.get("label") or "").strip())
                           code = (item.get("code") or item.get("value") or "").strip().upper()
                           code = re.sub(r"[^A-Za-z0-9]+", "", code)
                           if slot and code:
                               pairs.append((slot, code))
                       elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                          slot = str(item[0]).strip()
+                          slot = normalize_slot(str(item[0]).strip())
                           code = re.sub(r"[^A-Za-z0-9]+", "", str(item[-1])).upper()
                           if slot and code:
                               pairs.append((slot, code))
@@ -483,22 +513,23 @@ jobs:
                       week = w
                   gemini_used = True
 
-          # Ask for a single confirmation instead of per-item ticking
+          # Ask for a single text reply confirmation (reply with 'confirm')
           confirmed = False
           cb = os.environ.get('COMMENT_BODY') or ''
-          if re.search(r"\b(confirm|确认|已确认)\b", cb, flags=re.I):
+          if re.search(r"\b(confirm)\b", cb, flags=re.I):
               confirmed = True
           if pairs and not confirmed:
               lines = [
-                  "Detected attendance items. Reply to this issue with 'confirm' (or '确认') to proceed.",
+                  "## ✅ Single Confirmation",
+                  "**Please reply to this issue with `confirm` to proceed.**",
                   "",
-                  "Items:",
+                  "The following items will be processed:",
               ]
               for slot, code in pairs:
                   # Keep the summary concise; no dates in the confirmation list
                   lines.append(f"- {slot}, code {code}")
               lines.append("")
-              lines.append("Once you reply 'confirm', this workflow will generate and commit the JSON.")
+              lines.append("> Reply with a single line `confirm` only. No extra text. The workflow will then generate and commit the JSON.")
               comment = "\n".join(lines)
               subprocess.run([
                   'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
@@ -523,8 +554,8 @@ jobs:
           # If pairs are found but course/week missing, request them
           if not course or not week:
             missing = []
-            if not course: missing.append('课程代码（如 FIT1111）')
-            if not week: missing.append('Week 编号（如 Week 3）')
+            if not course: missing.append('Course code (e.g., FIT1111)')
+            if not week: missing.append('Week number (e.g., Week 3)')
             comment = (
               "Attendance codes have been identified, but the following information is missing: " + ", ".join(missing) + ".\n\n"
               "Please add the missing information to the issue body:\n\n- Course code (e.g., FIT1111)\n- Week number (e.g., Week 3)\n\nThe JSON file will be generated automatically after the issue is updated."
