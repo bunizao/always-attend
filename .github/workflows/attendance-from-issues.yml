@@ -333,13 +333,21 @@ jobs:
               kind = m.group(1).title()
               if kind == 'Laboratory':
                   kind = 'Lab'
-              # Search number and optional -P# suffix somewhere after the kind
+              # Search number and optional -P# suffix somewhere after the kind.
+              # Heuristic: take the last occurrence that is NOT a time hour (i.e., not followed by ':').
               tail = s[m.end():]
-              m2 = re.search(r"(?i)0*(\d{1,2})(?:\s*[-_ ]*P?0*(\d{1,2}))?", tail)
-              if not m2:
+              tail_clean = re.sub(r"(?i)\b\d{1,2}:\d{2}\s*(?:AM|PM)?", " ", tail)
+              matches = list(re.finditer(r"(?i)0*(\d{1,2})\s*(?:[-_ ]*(P)0*(\d{1,2}))?", tail_clean))
+              # Filter out minute tokens like ':00' by excluding matches preceded by ':'
+              valid = [m for m in matches if not (m.start() > 0 and tail_clean[m.start()-1] == ':')]
+              if valid:
+                  matches = valid
+              if not matches:
                   return f"{kind}"
+              pmatches = [m for m in matches if m.group(2)] or matches
+              m2 = pmatches[-1]
               n = int(m2.group(1))
-              p = m2.group(2)
+              p = m2.group(3) if m2.group(2) else None
               slot = f"{kind} {n:02d}"
               if p:
                   slot += f"-P{int(p)}"

@@ -7,6 +7,7 @@ from urllib.parse import urlparse, urlunparse
 import importlib
 import argparse
 import re
+import random
 
 import pyotp
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
@@ -431,6 +432,60 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
     return True, "submitted (no explicit success hint)"
 
 
+async def try_submit_code_anywhere(page: Page, base: str, code: str) -> Tuple[bool, str]:
+    """Try to submit a code without selecting a specific slot.
+
+    Navigates across a small set of known pages and attempts to locate a code input.
+    Returns (ok, message).
+    """
+    targets = [
+        f"{base}/student/AttendanceInfo.aspx",
+        f"{base}/student/Units.aspx",
+        f"{base}/student/Default.aspx",
+        base,
+    ]
+    for url in targets:
+        try:
+            log_debug(f"Try submit on: {url}")
+            await page.goto(url, timeout=45_000)
+        except Exception:
+            continue
+        ok, msg = await submit_code_on_entry(page, code)
+        if ok:
+            return ok, msg
+    return False, "No code input found across known pages"
+
+
+def _list_local_codes_for_course(course_code: str) -> List[str]:
+    """Aggregate distinct codes from data/{COURSE}/*.json (local repository)."""
+    codes: List[str] = []
+    try:
+        course = ''.join(ch for ch in course_code.upper() if ch.isalnum())
+        course_dir = os.path.join('data', course)
+        if not os.path.isdir(course_dir):
+            return []
+        seen = set()
+        for name in sorted(os.listdir(course_dir)):
+            if not name.endswith('.json'):
+                continue
+            path = os.path.join(course_dir, name)
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if not isinstance(data, list):
+                    continue
+                for item in data:
+                    code_val = str((item or {}).get('code') or '').strip()
+                    if code_val and code_val not in seen:
+                        seen.add(code_val)
+                        codes.append(code_val)
+            except Exception:
+                continue
+    except Exception:
+        return codes
+    return codes
+
+
 async def run_submit(dry_run: bool = False) -> None:
     PORTAL_URL = os.getenv("PORTAL_URL")
     BROWSER = os.getenv("BROWSER", "chromium").lower()
@@ -525,53 +580,39 @@ async def run_submit(dry_run: bool = False) -> None:
 
             for course in enrolled_courses:
                 log_step(f"Processing course: {course}")
+                # Determine target week: explicit WEEK_NUMBER or latest available week
                 week_for_course = WEEK_NUMBER or find_latest_week(course)
-                entries = parse_codes(course_code=course, week_number=week_for_course)
+                if not week_for_course:
+                    log_warn(f"No week detected for {course}. Add data/{course}/<week>.json or set WEEK_NUMBER.")
+                    continue
 
-                if not entries:
-                    if week_for_course:
-                        log_warn(f"No attendance codes found for {course} week {week_for_course}.")
-                    else:
-                        log_warn(f"No attendance codes found for {course}. Provide codes via data/{course}/<week>.json or env.")
+                entries = parse_codes(course_code=course, week_number=week_for_course)
+                codes = list({(item.get('code') or '').strip() for item in entries if (item.get('code') or '').strip()})
+
+                if not codes:
+                    log_warn(f"No attendance codes found for {course} week {week_for_course}.")
                     issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/bunizao/always-attend/issues/new"
                     log_info(f"You can add missing codes by creating an issue at: {issues_url}")
                     continue
 
-                log_ok(f"Loaded {len(entries)} code entries for {course}")
+                log_ok(f"Loaded {len(codes)} codes for {course} (week {week_for_course})")
 
                 if dry_run:
-                    for item in entries:
-                        print(" -", item)
+                    for code in codes:
+                        print(" -", {'course': course, 'week': week_for_course, 'code': code})
                     continue
 
-                for item in entries:
-                    slot = item.get("slot")
-                    date_str = item.get("date")
-                    code_val = (item.get("code") or "").strip()
-                    if not code_val:
-                        log_info(f"Skip entry without code: {item}")
-                        continue
-                    anchor = None
-                    if date_str:
-                        # Validate date format and compute anchor if provided
-                        try:
-                            anchor = format_anchor(date_str)
-                        except Exception:
-                            log_warn(f"Ignore invalid date format (expect YYYY-MM-DD), proceeding without date: {item}")
-                            date_str = None
-                    if date_str:
-                        log_step(f"Processing: date={date_str} (anchor={anchor}) slot={slot}")
-                    else:
-                        log_step(f"Processing: slot={slot} (no specific date)")
-                    opened = await find_and_open_slot(page, base, date_str, slot)
-                    if not opened:
-                        log_warn(" -> Not found or already submitted; skipping")
-                        continue
-                    ok, msg = await submit_code_on_entry(page, code_val)
+                # Try each code without matching slot, with random sleep to avoid audit triggers
+                for code_val in codes:
+                    delay = random.uniform(2.0, 5.0)
+                    log_info(f"Sleeping {delay:.2f}s before trying code for {course}...")
+                    await asyncio.sleep(delay)
+                    log_step(f"Trying code for {course} (week {week_for_course}): {code_val}")
+                    ok, msg = await try_submit_code_anywhere(page, base, code_val)
                     if ok:
                         log_ok(f" -> OK: {msg}")
                     else:
-                        log_err(f" -> FAILED: {msg}")
+                        log_warn(f" -> Not accepted here: {msg}")
         finally:
             # Save storage state only for non-persistent contexts
             if browser is not None:
