@@ -376,27 +376,8 @@ jobs:
           date_by_pair = {}
           task_items, has_tasks, checked_count = parse_task_list(aggregate_text)
           if has_tasks:
-              if checked_count == 0:
-                  if task_items:
-                      # Render a human-readable task list with unchecked boxes for the user to tick
-                      lines = [
-                          "Task list detected. Please tick (check) the items you want to commit to the database.",
-                          "",
-                          "Detected items:",
-                      ]
-                      for it in task_items:
-                          # Echo each detected line as an unchecked task so user can tick
-                          lines.append(f"- [ ] {it.get('rest', it['slot'] + ', code ' + it['code'])}")
-                      lines.append("")
-                      lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
-                      comment = "\n".join(lines)
-                      subprocess.run([
-                          'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
-                          '--method','POST','-f',f'body={comment}'
-                      ], check=False)
-                      sys.exit(0)
-              # Use only checked items and de-duplicate
-              task_items_selected = [it for it in task_items if it.get('checked')]
+              # Use all detected items; do not require per-item ticking
+              task_items_selected = task_items
               uniq = {}
               for it in task_items_selected:
                   key = (it['slot'].strip(), (it.get('date') or ''), it['code'].strip().upper())
@@ -502,22 +483,22 @@ jobs:
                       week = w
                   gemini_used = True
 
-          # If we have pairs but no explicit checked task list, ask user to confirm via checkboxes
-          if pairs and not (has_tasks and checked_count > 0):
+          # Ask for a single confirmation instead of per-item ticking
+          confirmed = False
+          cb = os.environ.get('COMMENT_BODY') or ''
+          if re.search(r"\b(confirm|确认|已确认)\b", cb, flags=re.I):
+              confirmed = True
+          if pairs and not confirmed:
               lines = [
-                  "Detected attendance items. Please tick (check) the ones you want to commit to the database.",
+                  "Detected attendance items. Reply to this issue with 'confirm' (or '确认') to proceed.",
                   "",
-                  "Detected items:",
+                  "Items:",
               ]
               for slot, code in pairs:
-                  d = date_by_pair.get((slot, code)) if 'date_by_pair' in locals() else None
-                  if d:
-                      lines.append(f"- [ ] {slot}, {d}, code {code}")
-                  else:
-                      lines.append(f"- [ ] {slot}, code {code}")
+                  # Keep the summary concise; no dates in the confirmation list
+                  lines.append(f"- {slot}, code {code}")
               lines.append("")
-              
-              lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
+              lines.append("Once you reply 'confirm', this workflow will generate and commit the JSON.")
               comment = "\n".join(lines)
               subprocess.run([
                   'gh','api', f'repos/{repo}/issues/{issue_no}/comments',

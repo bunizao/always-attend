@@ -145,6 +145,27 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
             except Exception as e:
                 log_warn(f"Auto-discovery failed for {course_code} week {week_number}: {e}")
 
+    # 2b) Local repository data fallback: data/{course}/{week}.json
+    if course_code and week_number and not (CODES_BASE_URL or CODES_URL or CODES_FILE):
+        course = ''.join(ch for ch in course_code.upper() if ch.isalnum())
+        week = ''.join(ch for ch in week_number if ch.isdigit())
+        if week:
+            local_path = os.path.join('data', course, f"{week}.json")
+            if os.path.exists(local_path):
+                try:
+                    with open(local_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if isinstance(data, list):
+                        for item in data:
+                            code_val = str(item.get("code", "")).strip()
+                            if code_val:
+                                result.append({"slot": item.get("slot"), "date": item.get("date"), "code": code_val})
+                    if result:
+                        log_info(f"Loaded {len(result)} codes from local data: {local_path}")
+                        return result
+                except Exception as e:
+                    log_warn(f"Failed to load local data file {local_path}: {e}")
+
     # 3) CODES_URL
     if CODES_URL:
         try:
@@ -448,10 +469,6 @@ async def run_submit(dry_run: bool = False) -> None:
     STORAGE_STATE = os.getenv("STORAGE_STATE", "storage_state.json")
     WEEK_NUMBER = os.getenv("WEEK_NUMBER")
 
-    if not WEEK_NUMBER:
-        log_err("WEEK_NUMBER environment variable is not set. Please set it in your .env file.")
-        return
-
     if not USER_DATA_DIR and os.path.exists(STORAGE_STATE) and not _is_storage_state_effective(STORAGE_STATE):
         log_warn(f"Detected empty storage state at {STORAGE_STATE}; opening interactive login...")
         try:
@@ -518,12 +535,33 @@ async def run_submit(dry_run: bool = False) -> None:
                 log_err("No enrolled courses found on the page.")
                 return
 
+            def find_latest_week(course: str) -> Optional[str]:
+                try:
+                    course_dir = os.path.join('data', ''.join(ch for ch in course if ch.isalnum()))
+                    if not os.path.isdir(course_dir):
+                        return None
+                    weeks = []
+                    for name in os.listdir(course_dir):
+                        if name.endswith('.json'):
+                            base = name[:-5]
+                            if base.isdigit():
+                                weeks.append(int(base))
+                    if not weeks:
+                        return None
+                    return str(max(weeks))
+                except Exception:
+                    return None
+
             for course in enrolled_courses:
                 log_step(f"Processing course: {course}")
-                entries = parse_codes(course_code=course, week_number=WEEK_NUMBER)
+                week_for_course = WEEK_NUMBER or find_latest_week(course)
+                entries = parse_codes(course_code=course, week_number=week_for_course)
 
                 if not entries:
-                    log_warn(f"No attendance codes found for {course} week {WEEK_NUMBER}.")
+                    if week_for_course:
+                        log_warn(f"No attendance codes found for {course} week {week_for_course}.")
+                    else:
+                        log_warn(f"No attendance codes found for {course}. Provide codes via data/{course}/<week>.json or env.")
                     issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/bunizao/always-attend/issues/new"
                     log_info(f"You can add missing codes by creating an issue at: {issues_url}")
                     continue
@@ -611,6 +649,7 @@ def main():
         os.environ['HEADLESS'] = '0'
     if args.week:
         os.environ['WEEK_NUMBER'] = str(args.week)
+    
 
     asyncio.run(run_submit(dry_run=bool(args.dry_run or os.getenv('DRY_RUN') in ('1','true','True'))))
 
