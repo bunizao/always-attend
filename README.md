@@ -6,6 +6,13 @@ Highlights:
 - Runs locally using Python and Playwright.
 - Handles Okta login with TOTP or manual code entry.
 - Reuses a persisted session (`storage_state.json`) to reduce MFA prompts.
+
+## Logging & Debugging
+
+- Control verbosity via `LOG_LEVEL` env: `DEBUG` | `INFO` | `WARN` | `ERROR` (default: `INFO`).
+- Disable ANSI colors with `NO_COLOR=1`.
+- Write logs to a file by setting `LOG_FILE=run.log`.
+- Extra scraping dump: `DEBUG_SCRAPING=1` will print page HTML while discovering courses.
 - Reads codes from a JSON URL, a local file, or environment variables.
 - Optional auto-discovery for codes from a base URL.
 

@@ -11,43 +11,15 @@ import re
 import pyotp
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
 
-
-# ===== Helpers =====
-def now_hms() -> str:
-    return datetime.now().strftime("%H:%M:%S")
-
-
-# --- simple colored logger ---
-USE_COLOR = os.getenv("NO_COLOR") is None
-
-class C:
-    RESET = "\033[0m"
-    DIM = "\033[2m"
-    BOLD = "\033[1m"
-    BLUE = "\033[34m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    RED = "\033[31m"
-
-def _c(s: str, color: str) -> str:
-    if not USE_COLOR:
-        return s
-    return f"{color}{s}{C.RESET}"
-
-def log_info(msg: str) -> None:
-    print(f"[{now_hms()}] " + _c(msg, C.DIM))
-
-def log_step(msg: str) -> None:
-    print(f"[{now_hms()}] " + _c(msg, C.BLUE))
-
-def log_ok(msg: str) -> None:
-    print(f"[{now_hms()}] " + _c(msg, C.GREEN))
-
-def log_warn(msg: str) -> None:
-    print(f"[{now_hms()}] " + _c(msg, C.YELLOW))
-
-def log_err(msg: str) -> None:
-    print(f"[{now_hms()}] " + _c(msg, C.RED))
+# Unified logger
+from logger import (
+    log_debug,
+    log_info,
+    log_step,
+    log_ok,
+    log_warn,
+    log_err,
+)
 
 
 def to_base(origin_url: str) -> str:
@@ -86,7 +58,7 @@ async def get_enrolled_courses(page: Page) -> List[str]:
     try:
         if os.getenv("DEBUG_SCRAPING") == "1":
             log_info("Debug scraping enabled. Page content will be printed.")
-            print(await page.content())
+            log_debug(await page.content())
 
         # Try to find course codes in links first, as they are more likely to be there.
         all_text = " ".join(await page.locator('a').all_inner_texts())

@@ -3,6 +3,7 @@ import argparse
 import asyncio
 
 from playwright.async_api import async_playwright
+from logger import log_info, log_warn
 
 
 def load_env_file(path: str = ".env") -> None:
@@ -56,7 +57,7 @@ async def run_login(portal_url: str,
         else:
             browser_type = p.chromium
 
-        print("Opening browser for interactive login...")
+        log_info("Opening browser for interactive login...")
         if user_data_dir:
             try:
                 context = await browser_type.launch_persistent_context(
@@ -65,7 +66,7 @@ async def run_login(portal_url: str,
                     channel=channel,
                 )
             except Exception as e:
-                print(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
+                log_warn(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
                 context = await browser_type.launch_persistent_context(
                     user_data_dir,
                     headless=not headed,
@@ -79,15 +80,15 @@ async def run_login(portal_url: str,
             try:
                 browser = await browser_type.launch(**launch_kwargs)
             except Exception as e:
-                print(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
+                log_warn(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
                 launch_kwargs.pop("channel", None)
                 browser = await browser_type.launch(**launch_kwargs)
             context = await browser.new_context()
             page = await context.new_page()
 
         await page.goto(portal_url, timeout=60_000)
-        print("Please complete Okta login and MFA in the browser window.")
-        print("After you're back on the Monash attendance portal, press Enter here to save the session...")
+        log_info("Please complete Okta login and MFA in the browser window.")
+        log_info("After you are back on the portal, press Enter here to save the session...")
         try:
             input()
         except Exception:
@@ -97,12 +98,12 @@ async def run_login(portal_url: str,
             try:
                 await context.storage_state(path=storage_state)
                 if _is_storage_state_effective(storage_state):
-                    print(f"Saved session to {storage_state}")
+                    log_info(f"Saved session to {storage_state}")
                 else:
-                    print(f"Saved session to {storage_state}, but it appears empty.")
-                    print("Make sure you returned to the attendance portal before pressing Enter, then try again.")
+                    log_warn(f"Saved session to {storage_state}, but it appears empty.")
+                    log_warn("Return to the attendance portal before pressing Enter, then try again.")
             except Exception as e:
-                print(f"Failed to save storage state: {e}")
+                log_warn(f"Failed to save storage state: {e}")
 
         if browser:
             await browser.close()
@@ -204,11 +205,11 @@ def main():
             storage_state=args.storage_state,
             user_data_dir=args.user_data_dir,
         ))
-        print("Session check:", "OK" if ok else "NOT logged in")
+        log_info("Session check: " + ("OK" if ok else "NOT logged in"))
         raise SystemExit(0 if ok else 1)
 
     if not headed:
-        print("Running in headless mode. To see a browser window, run with --headed or set HEADLESS=0.")
+        log_info("Running in headless mode. Use --headed or HEADLESS=0 for a browser window.")
 
     asyncio.run(run_login(
         portal_url=args.portal,
@@ -228,7 +229,7 @@ def main():
             storage_state=args.storage_state,
             user_data_dir=args.user_data_dir,
         ))
-        print("Session check:", "OK" if ok else "NOT logged in")
+        log_info("Session check: " + ("OK" if ok else "NOT logged in"))
 
 
 if __name__ == "__main__":
