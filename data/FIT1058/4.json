@@ -1,22 +1,78 @@
 [
   {
-    "slot": "Workshop 01-P1",
-    "code": "EBYWC"
-  },
-  {
-    "slot": "Workshop 01-P2",
+    "slot": "01-P2",
     "code": "32RR8"
   },
   {
-    "slot": "Workshop 04-P1",
+    "slot": "04-P1",
     "code": "T2748"
   },
   {
-    "slot": "Workshop 02-P1",
+    "slot": "02-P1",
     "code": "33HJE"
   },
   {
-    "slot": "Workshop 03-P1",
+    "slot": "03-P1",
     "code": "ML937"
+  },
+  {
+    "slot": "02-P2",
+    "code": "VHW3Y"
+  },
+  {
+    "slot": "03-P2",
+    "code": "64AW2"
+  },
+  {
+    "slot": "04-P2",
+    "code": "UPFR8"
+  },
+  {
+    "slot": "Applied 09 10:00AM",
+    "code": "MUUZA"
+  },
+  {
+    "slot": "Applied 08 4:30PM",
+    "code": "SEY2C"
+  },
+  {
+    "slot": "Applied 11 6:00PM",
+    "code": "A5Q2V"
+  },
+  {
+    "slot": "Applied 01 8:00AM",
+    "code": "MQ2NG"
+  },
+  {
+    "slot": "Applied 10 8:00AM",
+    "code": "SGAAN"
+  },
+  {
+    "slot": "Applied 02 10:00AM",
+    "code": "RF3T6"
+  },
+  {
+    "slot": "Applied 06 10:00AM",
+    "code": "GZXQV"
+  },
+  {
+    "slot": "Applied 07 12:00PM",
+    "code": "JY92R"
+  },
+  {
+    "slot": "Applied 12 12:00PM",
+    "code": "5RV5B"
+  },
+  {
+    "slot": "Applied 03 2:00PM",
+    "code": "NTXHD"
+  },
+  {
+    "slot": "Applied 13 4:00PM",
+    "code": "WGNP2"
+  },
+  {
+    "slot": "Applied 04 4:00PM",
+    "code": "J5Q6Y"
   }
 ]
