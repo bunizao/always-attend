@@ -156,6 +156,48 @@ jobs:
                   i += 1
               return pairs
 
+          def parse_task_list(body_text: str):
+              """Parse GitHub task list items for attendance entries.
+
+              Accepts lines like:
+              - [x] Workshop 01, Mon 2025-08-18 18:00, code GGGQK
+              - [ ] Laboratory 07, Wed 2025-08-20 16:00 code Q6TJA
+
+              Returns (items, has_tasks, checked_count) where items is a list of
+              dicts: {slot, code, date, checked, rest}. Includes both checked and unchecked.
+              """
+              items = []
+              has_tasks = False
+              checked_count = 0
+              for raw in body_text.splitlines():
+                  m = re.match(r"^\s*-\s*\[(?P<checked>[ xX])\]\s*(?P<rest>.+)$", raw)
+                  if not m:
+                      continue
+                  has_tasks = True
+                  checked = m.group('checked').lower() == 'x'
+                  rest = m.group('rest').strip()
+                  code_match = re.search(r"(?:\bcode\b[:\s]*|[ ,])([A-Za-z0-9]{4,12})\s*$", rest, flags=re.I)
+                  code_val = code_match.group(1).upper() if code_match else None
+                  date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", rest)
+                  date_val = date_match.group(1) if date_match else None
+                  slot_part = rest
+                  if date_match:
+                      slot_part = rest[:date_match.start()].rstrip(' ,')
+                  elif code_match:
+                      slot_part = rest[:code_match.start()].rstrip(' ,')
+                  slot_val = slot_part.split(',')[0].strip()
+                  if slot_val and code_val:
+                      if checked:
+                          checked_count += 1
+                      items.append({
+                          'slot': slot_val,
+                          'code': re.sub(r"[^A-Za-z0-9]+","", code_val).upper(),
+                          'date': date_val,
+                          'checked': checked,
+                          'rest': rest,
+                      })
+              return items, has_tasks, checked_count
+
           def call_gemini_api(api_key, issue_title, issue_body):
               prompt = f'''
               Task: From the GitHub Issue content below, extract the course code, week number (integer), and attendance codes.
@@ -179,20 +221,23 @@ jobs:
               {issue_body}
               '''
               
-              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
               
               headers = {
                   "Content-Type": "application/json",
+                  "x-goog-api-key": api_key,
+                  "User-Agent": "always-attend-bot/1.0"
               }
               
               data = {
                   "contents": [{
+                      "role": "user",
                       "parts": [{
                           "text": prompt
                       }]
                   }],
                   "generationConfig": {
-                      "response_mime_type": "application/json",
+                      "responseMimeType": "application/json",
                   }
               }
               
@@ -229,26 +274,29 @@ jobs:
               {"course": string|null, "week": integer|null, "codes": [{"slot": string, "code": string}]}
               '''
               
-              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+              api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
               
               headers = {
                   "Content-Type": "application/json",
+                  "x-goog-api-key": api_key,
+                  "User-Agent": "always-attend-bot/1.0"
               }
               
               data = {
                   "contents": [{
+                      "role": "user",
                       "parts": [
                           {"text": prompt},
                           {
-                              "inline_data": {
-                                  "mime_type": mime_type,
+                              "inlineData": {
+                                  "mimeType": mime_type,
                                   "data": image_data
                               }
                           }
                       ]
                   }],
                   "generationConfig": {
-                      "response_mime_type": "application/json",
+                      "responseMimeType": "application/json",
                   }
               }
               
@@ -265,6 +313,8 @@ jobs:
                   print(e.read().decode())
                   return None
 
+          
+
           def parse_extracted_json(text):
               # Accept raw JSON, fenced code blocks, or JSON embedded in prose
               s = (text or '').strip()
@@ -278,7 +328,7 @@ jobs:
                   data = json.loads(s)
               except Exception:
                   # Fallback: find the first JSON object in text
-                  m = re.search(r"{\s*\S[\s\S]*\S\s*}", s)
+                  m = re.search(r"\{[\s\S]*\}", s)
                   if not m:
                       return None, None, []
                   try:
@@ -321,17 +371,54 @@ jobs:
 
           gemini_api_key = os.environ.get('GEMINI_API_KEY')
           gemini_used = False
+          # Task list parsing with explicit user confirmation via checkboxes
+          task_items_selected = []
+          date_by_pair = {}
+          task_items, has_tasks, checked_count = parse_task_list(aggregate_text)
+          if has_tasks:
+              if checked_count == 0:
+                  if task_items:
+                      # Render a human-readable task list with unchecked boxes for the user to tick
+                      lines = [
+                          "Task list detected. Please tick (check) the items you want to commit to the database.",
+                          "",
+                          "Detected items:",
+                      ]
+                      for it in task_items:
+                          # Echo each detected line as an unchecked task so user can tick
+                          lines.append(f"- [ ] {it.get('rest', it['slot'] + ', code ' + it['code'])}")
+                      lines.append("")
+                      lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
+                      comment = "\n".join(lines)
+                      subprocess.run([
+                          'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
+                          '--method','POST','-f',f'body={comment}'
+                      ], check=False)
+                      sys.exit(0)
+              # Use only checked items and de-duplicate
+              task_items_selected = [it for it in task_items if it.get('checked')]
+              uniq = {}
+              for it in task_items_selected:
+                  key = (it['slot'].strip(), (it.get('date') or ''), it['code'].strip().upper())
+                  if key not in uniq:
+                      uniq[key] = it
+              task_items_selected = list(uniq.values())
+              pairs = []
+              for it in task_items_selected:
+                  pairs.append((it['slot'], it['code']))
+                  if it.get('date'):
+                      date_by_pair[(it['slot'], it['code'])] = it['date']
 
           # Image-first: try OCR on any attached images before text parsing
           if not pairs:
-              md_imgs = re.findall(r'!\\[^\\]*\\\\]\((https?://[^)\\s]+)\\)', aggregate_text)
-              plain_imgs = re.findall(r'(https?://[^)\\s\\]+(?:\.png|\.jpg|\.jpeg|\.webp|\.gif))', aggregate_text, flags=re.I)
-              gh_assets = re.findall(r'(https?://github.com/[^)\\s\\]+/assets/[^)\\s\\]+)', aggregate_text)
+              md_imgs = re.findall(r'!\[[^\]]*\]\((https?://[^)\s]+)\)', aggregate_text)
+              plain_imgs = re.findall(r'(https?://[^\s)\]>\]]+\.(?:png|jpg|jpeg|webp|gif))', aggregate_text, flags=re.I)
+              gh_assets = re.findall(r'(https?://github\.com/[^\s)\]>\]]+/assets/[^\s)\]>\]]+)', aggregate_text)
               # Merge and sanitize trailing punctuation like quotes or parentheses
               tmp = md_imgs + plain_imgs + gh_assets
               img_urls = []
               for u in tmp:
-                  su = u.strip().strip('"\'').rstrip(').,')
+                  su = u.strip().strip('\"\'').rstrip(').,')
                   if su and su not in img_urls:
                       img_urls.append(su)
 
@@ -415,48 +502,28 @@ jobs:
                       week = w
                   gemini_used = True
 
-          def is_confirmation_box_checked(body_text: str):
-              """Checks if the confirmation checkbox is ticked in the text."""
-              for raw in body_text.splitlines():
-                  m = re.match(r"^\s*-\s*\[(?P<checked>[xX])\]\s*(?P<rest>.+)$", raw)
-                  if m and "i confirm i want to commit these codes" in m.group('rest').lower():
-                      return True
-              return False
-
-          date_by_pair = {}
-          # If we have pairs, check for confirmation
-          if pairs:
-              if "i confirm i want to commit these codes" in body.lower():
-                  # Confirmation section already exists, check if it's checked
-                  if not is_confirmation_box_checked(body):
-                      # It's not checked, so we do nothing and wait for the user to check it
-                      sys.exit(0)
-                  # It's checked, so we proceed to commit the codes
-              else:
-                  # Confirmation section does not exist, so we add it to the issue body
-                  new_body_lines = [
-                      body,
-                      "",
-                      "---",
-                      "**Detected Codes:**",
-                      "I have detected the following attendance codes. Please confirm by checking the box below.",
-                      ""
-                  ]
-                  for slot, code in pairs:
-                      d = date_by_pair.get((slot, code)) if 'date_by_pair' in locals() else None
-                      if d:
-                          new_body_lines.append(f"{slot}, {d}, code {code}")
-                      else:
-                          new_body_lines.append(f"{slot}, code {code}")
-                  new_body_lines.append("")
-                  new_body_lines.append("- [ ] I confirm I want to commit these codes.")
-                  
-                  new_body = "\n".join(new_body_lines)
-                  subprocess.run([
-                      'gh','issue','edit',str(issue_no),
-                      '--body', new_body
-                  ], check=False)
-                  sys.exit(0)
+          # If we have pairs but no explicit checked task list, ask user to confirm via checkboxes
+          if pairs and not (has_tasks and checked_count > 0):
+              lines = [
+                  "Detected attendance items. Please tick (check) the ones you want to commit to the database.",
+                  "",
+                  "Detected items:",
+              ]
+              for slot, code in pairs:
+                  d = date_by_pair.get((slot, code)) if 'date_by_pair' in locals() else None
+                  if d:
+                      lines.append(f"- [ ] {slot}, {d}, code {code}")
+                  else:
+                      lines.append(f"- [ ] {slot}, code {code}")
+              lines.append("")
+              
+              lines.append("After you check the boxes, edit/save the issue; the workflow will run again and generate the JSON.")
+              comment = "\n".join(lines)
+              subprocess.run([
+                  'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
+                  '--method','POST','-f',f'body={comment}'
+              ], check=False)
+              sys.exit(0)
 
           # If still no pairs, ask user to provide proper text
           if not pairs:
@@ -497,7 +564,14 @@ jobs:
 
           # Build JSON entries for codes (include date from task list when available)
           entries = []
-          for slot, code in pairs:
+          if 'task_items_selected' in locals() and task_items_selected:
+            for it in task_items_selected:
+              item = {'slot': it['slot'].strip(), 'code': it['code'].strip().upper()}
+              if it.get('date'):
+                item['date'] = it['date']
+              entries.append(item)
+          else:
+            for slot, code in pairs:
               item = {'slot': slot.strip(), 'code': code.strip().upper()}
               d = date_by_pair.get((slot, code)) if 'date_by_pair' in locals() else None
               if d:
@@ -559,6 +633,21 @@ jobs:
             f"Raw URL: {raw}\n\n"
             f"The script can use this URL directly by setting `CODES_URL={raw}`."
           )
+          if 'task_items_selected' in locals() and task_items_selected:
+              ok += ("\n\nSource: checked GitHub task list items. You can uncheck items to exclude them and re-run by editing the issue.")
+              # Show committed items for clarity (deduplicated)
+              ok += "\nCommitted items:"
+              seen = set()
+              for it in task_items_selected:
+                  key = (it['slot'].strip(), (it.get('date') or ''), it['code'].strip().upper())
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  if it.get('date'):
+                      ok += f"\n- [x] {it['slot']}, {it['date']}, code {it['code']}"
+                  else:
+                      ok += f"\n- [x] {it['slot']}, code {it['code']}"
+          
           
           if pr_url:
               ok += f"\n\nDirect push was blocked; opened PR: {pr_url}"
