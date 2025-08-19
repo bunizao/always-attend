@@ -1,13 +1,14 @@
 import os
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 import importlib
 import argparse
 import re
 import random
+import time
 
 import pyotp
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
@@ -37,6 +38,24 @@ def format_anchor(date_str: str) -> str:
     mon = MONTH_ABBR[d.month - 1]
     yy = d.strftime("%y")
     return f"{dd}_{mon}_{yy}"
+
+
+def parse_anchor(anchor: str) -> Optional[datetime]:
+    """Parse a day anchor like '20_Aug_25' into a datetime (local date at midnight)."""
+    try:
+        parts = anchor.split('_')
+        if len(parts) != 3:
+            return None
+        dd_s, mon_s, yy_s = parts
+        day = int(dd_s)
+        mon_s_cap = mon_s.capitalize()
+        if mon_s_cap not in MONTH_ABBR:
+            return None
+        month = MONTH_ABBR.index(mon_s_cap) + 1
+        year = 2000 + int(yy_s)
+        return datetime(year, month, day)
+    except Exception:
+        return None
 
 
 def _is_storage_state_effective(path: str) -> bool:
@@ -410,7 +429,7 @@ SUCCESS_HINT_SELECTORS = ['text=/success/i','text=/submitted/i']
 
 
 async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
-    log_step(f"Submitting code: {code}")
+    log_debug(f"Submitting code: {code}")
     filled = await fill_first_match(page, [
         'input[name="code"]','input[id*="code" i]','input[placeholder*="code" i]','input[type="text"]'], code)
     if not filled:
@@ -432,28 +451,101 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
     return True, "submitted (no explicit success hint)"
 
 
-async def try_submit_code_anywhere(page: Page, base: str, code: str) -> Tuple[bool, str]:
+async def try_submit_code_anywhere(page: Page, base: str, code: str, date_anchor: Optional[str] = None) -> Tuple[bool, str]:
     """Try to submit a code without selecting a specific slot.
 
     Navigates across a small set of known pages and attempts to locate a code input.
     Returns (ok, message).
     """
-    targets = [
+    targets: List[str] = []
+    # Prefer Units.aspx day anchor where code input typically appears
+    if date_anchor:
+        targets.append(f"{base}/student/Units.aspx#{date_anchor}")
+    else:
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            targets.append(f"{base}/student/Units.aspx#{format_anchor(today_str)}")
+        except Exception:
+            pass
+    targets += [
         f"{base}/student/AttendanceInfo.aspx",
         f"{base}/student/Units.aspx",
         f"{base}/student/Default.aspx",
         base,
     ]
+    input_selectors = [
+        'input[name="code"]','input[id*="code" i]','input[placeholder*="code" i]',
+        'input[name="otp"]','input[name="passcode"]','input[autocomplete="one-time-code"]','input[inputmode="numeric"]','input[type="tel"]'
+    ]
+
+    async def has_visible_code_input() -> bool:
+        for sel in input_selectors:
+            try:
+                el = page.locator(sel).first
+                if await el.is_visible(timeout=1000):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def try_click_ctas() -> None:
+        candidates = [
+            'button:has-text("Submit attendance")',
+            r'text=/\bSubmit\s+attendance\b/i',
+            'button:has-text("Submit")',
+            'a:has-text("Submit")',
+            r'text=/\bAttendance\b/i',
+            r'text=/\bEnter\s+code\b/i',
+        ]
+        for sel in candidates:
+            try:
+                el = page.locator(sel).first
+                if await el.is_visible(timeout=1000):
+                    await el.click()
+                    await page.wait_for_timeout(600)
+            except Exception:
+                continue
+    
     for url in targets:
         try:
             log_debug(f"Try submit on: {url}")
             await page.goto(url, timeout=45_000)
         except Exception:
             continue
-        ok, msg = await submit_code_on_entry(page, code)
-        if ok:
-            return ok, msg
+        # If there's a code input already, submit
+        if await has_visible_code_input():
+            return await submit_code_on_entry(page, code)
+        # Otherwise, poke likely CTAs to reveal input and retry
+        await try_click_ctas()
+        if await has_visible_code_input():
+            return await submit_code_on_entry(page, code)
     return False, "No code input found across known pages"
+
+
+async def collect_day_anchors(page: Page, base: str, start_monday: Optional[datetime] = None) -> List[str]:
+    url = f"{base}/student/Units.aspx"
+    await page.goto(url, timeout=60_000)
+    panels = page.locator('[id^="dayPanel_"]')
+    anchors: List[str] = []
+    try:
+        count = await panels.count()
+        for i in range(count):
+            pid = await panels.nth(i).get_attribute('id')
+            if pid and pid.startswith('dayPanel_'):
+                anchors.append(pid[len('dayPanel_'):])
+    except Exception:
+        pass
+    # Sort anchors by date and optionally filter to the ISO week starting at start_monday
+    dated: List[Tuple[datetime, str]] = []
+    for a in anchors:
+        dt = parse_anchor(a)
+        if dt:
+            dated.append((dt, a))
+    dated.sort(key=lambda x: x[0])
+    if start_monday:
+        week_end = start_monday + timedelta(days=6)
+        dated = [t for t in dated if start_monday.date() <= t[0].date() <= week_end.date()]
+    return [a for _, a in dated] or anchors
 
 
 def _list_local_codes_for_course(course_code: str) -> List[str]:
@@ -551,6 +643,8 @@ async def run_submit(dry_run: bool = False) -> None:
                 log_warn("Not authenticated; running login flow...")
                 await login(page)
             base = to_base(page.url) or to_base(PORTAL_URL)
+            # Global timeout baseline and config
+            start_time = time.monotonic()
 
             attendance_info_url = f"{base}/student/AttendanceInfo.aspx"
             log_step(f"Navigating to attendance info page: {attendance_info_url}")
@@ -588,6 +682,15 @@ async def run_submit(dry_run: bool = False) -> None:
 
                 entries = parse_codes(course_code=course, week_number=week_for_course)
                 codes = list({(item.get('code') or '').strip() for item in entries if (item.get('code') or '').strip()})
+                code_to_anchor: Dict[str, str] = {}
+                for it in entries:
+                    code_val = (it.get('code') or '').strip()
+                    date_str = (it.get('date') or '').strip()
+                    if code_val and date_str:
+                        try:
+                            code_to_anchor[code_val] = format_anchor(date_str)
+                        except Exception:
+                            pass
 
                 if not codes:
                     log_warn(f"No attendance codes found for {course} week {week_for_course}.")
@@ -602,17 +705,152 @@ async def run_submit(dry_run: bool = False) -> None:
                         print(" -", {'course': course, 'week': week_for_course, 'code': code})
                     continue
 
-                # Try each code without matching slot, with random sleep to avoid audit triggers
-                for code_val in codes:
-                    delay = random.uniform(2.0, 5.0)
-                    log_info(f"Sleeping {delay:.2f}s before trying code for {course}...")
-                    await asyncio.sleep(delay)
-                    log_step(f"Trying code for {course} (week {week_for_course}): {code_val}")
-                    ok, msg = await try_submit_code_anywhere(page, base, code_val)
-                    if ok:
-                        log_ok(f" -> OK: {msg}")
+                # Iterate day panels, click entries for this course (exclude PASS), try week codes
+                # Determine week start (Monday) using entry dates when available, else current week
+                monday_dt: Optional[datetime] = None
+                try:
+                    dates = []
+                    for it in entries:
+                        ds = (it.get('date') or '').strip()
+                        if ds:
+                            dates.append(datetime.strptime(ds, '%Y-%m-%d'))
+                    if dates:
+                        base_day = min(dates)
                     else:
-                        log_warn(f" -> Not accepted here: {msg}")
+                        base_day = datetime.now()
+                    monday_dt = base_day - timedelta(days=base_day.weekday())
+                except Exception:
+                    monday_dt = None
+
+                anchors = await collect_day_anchors(page, base, start_monday=monday_dt)
+                today_date = datetime.now().date()
+                for idx, anchor in enumerate(anchors):
+                    # Exit strategy: global timeout and attempt caps (configurable)
+                    # Read lazily to avoid cluttering top-level scope
+                    try:
+                        GLOBAL_TIMEOUT_SEC = int(os.getenv("GLOBAL_TIMEOUT_SEC", "900"))
+                    except Exception:
+                        GLOBAL_TIMEOUT_SEC = 900
+                    if GLOBAL_TIMEOUT_SEC and (time.monotonic() - start_time) > GLOBAL_TIMEOUT_SEC:
+                        log_warn("Global timeout reached; stopping run.")
+                        return
+                    # Stop when reaching future days (cannot submit future codes)
+                    try:
+                        adt = parse_anchor(anchor)
+                        if adt and adt.date() > today_date:
+                            log_info("Reached future day; stopping this week's scan.")
+                            break
+                    except Exception:
+                        pass
+                    if idx > 0:
+                        delay = random.uniform(2.0, 5.0)
+                        log_debug(f"Sleeping {delay:.2f}s before next day panel...")
+                        await asyncio.sleep(delay)
+                    units_url = f"{base}/student/Units.aspx#{anchor}"
+                    log_step(f"Open day panel: {units_url}")
+                    try:
+                        await page.goto(units_url, timeout=60_000)
+                        await page.wait_for_selector(f'#dayPanel_{anchor}', timeout=15_000)
+                    except Exception:
+                        continue
+                    day_panel = page.locator(f'#dayPanel_{anchor}')
+                    # Consider anchors, buttons, and ARIA links/buttons as entry triggers
+                    links = day_panel.locator('a, button, [role="link"], [role="button"]')
+                    try:
+                        n = await links.count()
+                    except Exception:
+                        n = 0
+                    processed_this_day = False
+                    for i in range(n):
+                        try:
+                            el = links.nth(i)
+                            text = (await el.inner_text()).strip()
+                        except Exception:
+                            continue
+                        # Skip PASS sessions early by visible text
+                        if re.search(r'\bPASS\b', text, flags=re.I):
+                            continue
+                        # Determine if this link belongs to the course. Some pages only show slot names on the link,
+                        # so also check attributes and nearest container text up to the day panel.
+                        match = False
+                        try:
+                            href = (await el.get_attribute('href')) or ''
+                        except Exception:
+                            href = ''
+                        try:
+                            title_attr = (await el.get_attribute('title')) or ''
+                        except Exception:
+                            title_attr = ''
+                        try:
+                            aria = (await el.get_attribute('aria-label')) or ''
+                        except Exception:
+                            aria = ''
+                        container_txt = ''
+                        try:
+                            container_txt = (await el.evaluate("(e, rootSel) => { const root = e.closest(rootSel); let cur=e; let acc=''; while(cur && cur!==root){ acc += ' ' + (cur.innerText||''); cur = cur.parentElement; } acc += ' ' + (root?root.innerText:''); return acc; }", f"#dayPanel_{anchor}")) or ''
+                        except Exception:
+                            pass
+                        haystack = ' '.join([text, href, title_attr, aria, container_txt])
+                        if re.search(re.escape(course), haystack, flags=re.I):
+                            match = True
+                        # We now click even if course name isn't on the element; we'll verify on the opened page
+                        # Open entry
+                        try:
+                            await el.click()
+                            await page.wait_for_load_state('domcontentloaded', timeout=15_000)
+                        except Exception:
+                            continue
+                        processed_this_day = True
+                        # Verify this entry is for the course (or allow if course is present in page text)
+                        course_ok = False
+                        try:
+                            if await page.locator(f'text={course}').first.is_visible(timeout=1000):
+                                course_ok = True
+                        except Exception:
+                            course_ok = False
+                        # Quick probe for a code input on the page
+                        input_selectors = [
+                            'input[name="code"]','input[id*="code" i]','input[placeholder*="code" i]','input[type="text"]'
+                        ]
+                        page_has_code_input = False
+                        for sel in input_selectors:
+                            try:
+                                if await page.locator(sel).first.is_visible(timeout=800):
+                                    page_has_code_input = True
+                                    break
+                            except Exception:
+                                continue
+                        if not (course_ok or page_has_code_input):
+                            # Not our course and no code input; skip
+                            try:
+                                await page.go_back(timeout=8_000)
+                            except Exception:
+                                try:
+                                    await page.goto(units_url, timeout=30_000)
+                                except Exception:
+                                    pass
+                            continue
+                        # Try each code (no per-code sleep; sleep only between days)
+                        log_step(f"Processing {course}...")
+                        submitted = False
+                        for code_val in codes:
+                            ok, msg = await submit_code_on_entry(page, code_val)
+                            if ok:
+                                log_ok(f"Submitted {course}: {msg}")
+                                submitted = True
+                                break
+                        if not submitted:
+                            log_warn(f"Failed {course}: no code accepted for this entry")
+                        # Return to day panel for further entries
+                        try:
+                            await page.go_back(timeout=15_000)
+                        except Exception:
+                            # Reload the day panel if history not available
+                            try:
+                                await page.goto(units_url, timeout=60_000)
+                            except Exception:
+                                pass
+                    # Continue scanning remaining days unless a future day is reached
         finally:
             # Save storage state only for non-persistent contexts
             if browser is not None:
