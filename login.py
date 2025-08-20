@@ -4,32 +4,6 @@ import asyncio
 
 from playwright.async_api import async_playwright
 from logger import log_info, log_warn
-import asyncio
-
-
-def load_env_file(path: str = ".env") -> None:
-    """Lightweight .env loader: KEY=VALUE lines into os.environ.
-    Does not error if the file is missing. Values with surrounding quotes are unquoted.
-    Environment variables that already exist are not overridden.
-    """
-    try:
-        if not os.path.exists(path):
-            return
-        with open(path, "r", encoding="utf-8") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line or line.startswith('#'):
-                    continue
-                if '=' not in line:
-                    continue
-                key, val = line.split('=', 1)
-                key = key.strip()
-                val = val.strip().strip('"').strip("'")
-                if key and (key not in os.environ):
-                    os.environ[key] = val
-    except Exception:
-        # Best-effort loader; ignore parsing errors
-        pass
 
 
 def _is_storage_state_effective(path: str) -> bool:
@@ -186,7 +160,7 @@ async def check_session(check_url: str,
 
 def main():
     # Load env file first so parser defaults can see them
-    load_env_file(os.getenv("ENV_FILE", ".env"))
+    load_env(os.getenv("ENV_FILE", ".env"))
 
     parser = argparse.ArgumentParser(description="Interactive Okta login helper (saves session state)")
     parser.add_argument("--portal", default=os.getenv("PORTAL_URL", ""), help="Portal URL (e.g., https://attendance.monash.edu.my/student/Default.aspx)")
