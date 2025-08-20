@@ -22,6 +22,7 @@ from logger import (
     log_warn,
     log_err,
 )
+from env_utils import load_env
 
 
 def to_base(origin_url: str) -> str:
@@ -984,23 +985,6 @@ async def run_submit(dry_run: bool = False) -> None:
 
 
 def main():
-    # Light .env loader
-    def load_env(path: str = ".env"):
-        try:
-            if not os.path.exists(path):
-                return
-            with open(path, 'r', encoding='utf-8') as f:
-                for raw in f:
-                    line = raw.strip()
-                    if not line or line.startswith('#') or '=' not in line:
-                        continue
-                    k, v = line.split('=', 1)
-                    k = k.strip(); v = v.strip().strip('"').strip("'")
-                    if k and (k not in os.environ):
-                        os.environ[k] = v
-        except Exception:
-            pass
-
     load_env(os.getenv('ENV_FILE', '.env'))
 
     ap = argparse.ArgumentParser(description="Submit attendance codes (requires prior login)")
