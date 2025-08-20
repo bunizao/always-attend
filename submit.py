@@ -58,22 +58,17 @@ def _is_storage_state_effective(path: str) -> bool:
         return False
 
 
-async def get_enrolled_courses(page: Page) -> List[str]:
+async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
     """
-    Scrapes the page to find all enrolled course codes.
-    This function assumes that course codes are 3 letters followed by 4 digits.
+    Navigates to the attendance info page and scrapes enrolled course codes.
     """
+    attendance_info_url = f"{base_url}/student/AttendanceInfo.aspx"
+    logger.info(f"[STEP] Navigating to {attendance_info_url} to find courses...")
+    await page.goto(attendance_info_url, timeout=30000)
+
     logger.info("[STEP] Scraping page for enrolled courses...")
     try:
-        if os.getenv("DEBUG_SCRAPING") == "1":
-            logger.info("Debug scraping enabled. Page content will be printed.")
-            logger.debug(await page.content())
-
-        all_text = " ".join(await page.locator('a').all_inner_texts())
-
-        if not re.search(r'\b([A-Z]{3}\d{4})\b', all_text):
-            all_text = await page.content()
-
+        all_text = await page.content()
         course_codes = re.findall(r'\b([A-Z]{3}\d{4})\b', all_text)
         unique_codes = sorted(list(set(course_codes)))
         logger.info(f"Found {len(unique_codes)} enrolled courses: {unique_codes}")
@@ -326,6 +321,31 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
     return True, "submitted (no explicit success hint)"
 
 
+async def collect_day_anchors(page: Page, base: str, start_monday: Optional[datetime] = None) -> List[str]:
+    url = f"{base}/student/Units.aspx"
+    await page.goto(url, timeout=60000)
+    panels = page.locator('[id^="dayPanel_"]')
+    anchors: List[str] = []
+    try:
+        count = await panels.count()
+        for i in range(count):
+            pid = await panels.nth(i).get_attribute('id')
+            if pid and pid.startswith('dayPanel_'):
+                anchors.append(pid[len('dayPanel_'):])
+    except Exception:
+        pass
+    dated: List[Tuple[datetime, str]] = []
+    for a in anchors:
+        dt = parse_anchor(a)
+        if dt:
+            dated.append((dt, a))
+    dated.sort(key=lambda x: x[0])
+    if start_monday:
+        week_end = start_monday + timedelta(days=6)
+        dated = [t for t in dated if start_monday.date() <= t[0].date() <= week_end.date()]
+    return [a for _, a in dated] or anchors
+
+
 async def run_submit(dry_run: bool = False) -> None:
     PORTAL_URL = os.getenv("PORTAL_URL")
     BROWSER = os.getenv("BROWSER", "chromium").lower()
@@ -396,13 +416,68 @@ async def run_submit(dry_run: bool = False) -> None:
             PANEL_WAIT_MS = int(os.getenv('PANEL_WAIT_MS', 6000))
             DAY_SLEEP_MIN = float(os.getenv('DAY_SLEEP_MIN', 1.0))
             DAY_SLEEP_MAX = float(os.getenv('DAY_SLEEP_MAX', 2.2))
-
-            enrolled_courses = await get_enrolled_courses(page)
+            
+            enrolled_courses = await scrape_enrolled_courses(page, base)
             if not enrolled_courses:
-                logger.error("No enrolled courses found on the page.")
-                return
+                logger.warning("No enrolled courses found via scraping; falling back to icon-based discovery.")
+                # Fallback: detect courses from pending entries (question icon) across this week
+                base_day = datetime.now()
+                monday_dt_fb = base_day - timedelta(days=base_day.weekday())
+                anchors_fb = await collect_day_anchors(page, base, start_monday=monday_dt_fb)
+                found = set()
+                for anchor in anchors_fb:
+                    units_url_fb = f"{base}/student/Units.aspx#{anchor}"
+                    try:
+                        await page.goto(units_url_fb, timeout=25000)
+                    except Exception:
+                        continue
+                    root_fb = page
+                    try:
+                        await page.wait_for_selector(f'#dayPanel_{anchor}', timeout=3000)
+                        root_fb = page.locator(f'#dayPanel_{anchor}')
+                    except Exception:
+                        pass
+                    entries_fb = root_fb.locator(f'li:not(.ui-disabled):has(img[src*="question"]):has(a[href*="Entry.aspx"][href*="d={anchor}"])')
+                    try:
+                        n_fb = await entries_fb.count()
+                    except Exception:
+                        n_fb = 0
+                    for i in range(n_fb):
+                        try:
+                            t = (await entries_fb.nth(i).inner_text()).strip()
+                        except Exception:
+                            continue
+                        m = re.search(r'\b([A-Z]{3}\d{4})\b', t)
+                        if m:
+                            found.add(m.group(1))
+                if not found:
+                    logger.error("No pending entries detected this week. Nothing to do.")
+                    return
+                enrolled_courses = sorted(found)
+                logger.info(f"Discovered courses from pending entries: {enrolled_courses}")
+
+            def find_latest_week(course: str) -> Optional[str]:
+                try:
+                    course_dir = os.path.join('data', ''.join(ch for ch in course if ch.isalnum()))
+                    if not os.path.isdir(course_dir):
+                        return None
+                    weeks = []
+                    for name in os.listdir(course_dir):
+                        if name.endswith('.json'):
+                            base = name[:-5]
+                            if base.isdigit():
+                                weeks.append(int(base))
+                    if not weeks:
+                        return None
+                    return str(max(weeks))
+                except Exception:
+                    return None
 
             issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/tutu/always-attend/issues/new"
+            
+            # 确保 units_url 在循环外定义
+            units_url = f"{base}/student/Units.aspx"
+            
             for course in enrolled_courses:
                 logger.info(f"[STEP] Processing course: {course}")
                 week_for_course = WEEK_NUMBER or find_latest_week(course)
@@ -434,6 +509,7 @@ async def run_submit(dry_run: bool = False) -> None:
 
                 anchors = await collect_day_anchors(page, base, start_monday=monday_dt)
                 today_date = datetime.now().date()
+                
                 for idx, anchor in enumerate(anchors):
                     try:
                         GLOBAL_TIMEOUT_SEC = int(os.getenv("GLOBAL_TIMEOUT_SEC", "900"))
@@ -449,15 +525,20 @@ async def run_submit(dry_run: bool = False) -> None:
                             break
                     except Exception:
                         pass
+                    
                     if idx > 0:
                         delay = random.uniform(DAY_SLEEP_MIN, DAY_SLEEP_MAX)
                         logger.debug(f"Sleeping {delay:.2f}s before next day panel...")
                         await asyncio.sleep(delay)
-                    units_url = f"{base}/student/Units.aspx#{anchor}"
-                    logger.info(f"[STEP] Open day panel: {units_url}")
+                    
+                    # 导航到特定日期的URL
+                    day_url = f"{base}/student/Units.aspx#{anchor}"
+                    
                     try:
-                        await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                        await page.goto(day_url, timeout=PAGE_NAV_TIMEOUT_MS)
                         day_panel_selector = f'#dayPanel_{anchor}'
+                        
+                        # 等待面板可见
                         js_function = f""" 
                         () => {{
                             const panel = document.querySelector('{day_panel_selector}');
@@ -466,24 +547,102 @@ async def run_submit(dry_run: bool = False) -> None:
                             return style.display !== 'none';
                         }}
                         """
-                        await page.wait_for_function(js_function, timeout=PANEL_WAIT_MS)
+                        await page.wait_for_function(js_function, timeout=15000)
                         root = page.locator(day_panel_selector)
-                    except Exception:
-                        logger.debug(f"Day {anchor}: dayPanel not found or not visible quickly; scanning whole page for entries.")
+                        logger.debug(f"Successfully found day panel for {anchor}")
+                    except Exception as e:
+                        logger.debug(f"Day {anchor}: dayPanel not found or not visible quickly; scanning whole page for entries. Error: {e}")
                         root = page
 
-                    clickable_entries = root.locator(f'li:not(.ui-disabled):has-text(/{course}/i)')
+                    # 详细调试选择器
+                    logger.debug(f"Debugging selectors for {course} on {anchor}...")
+                    
+                    # 分步检查选择器
+                    all_lis = root.locator('li')
+                    question_lis = root.locator('li:has(img[src*="question"])')
+                    entry_links = root.locator('li:has(a[href*="Entry.aspx"])')
+                    # Playwright's CSS :has-text() does not support regex inside CSS; use filter(has_text=...)
+                    course_mentions = root.locator('li').filter(has_text=re.compile(re.escape(course), re.I))
+                    
+                    try:
+                        all_count = await all_lis.count()
+                        q_count = await question_lis.count()
+                        e_count = await entry_links.count()
+                        c_count = await course_mentions.count()
+                        
+                        logger.debug(f"  All li elements: {all_count}")
+                        logger.debug(f"  With question icon: {q_count}")
+                        logger.debug(f"  With Entry.aspx links: {e_count}")
+                        logger.debug(f"  Mentioning {course}: {c_count}")
+                        
+                        # 显示课程相关条目的详细信息
+                        for i in range(min(c_count, 5)):
+                            try:
+                                text = (await course_mentions.nth(i).inner_text()).strip()
+                                classes = await course_mentions.nth(i).get_attribute('class') or ""
+                                has_question = await course_mentions.nth(i).locator('img[src*="question"]').count() > 0
+                                has_entry_link = await course_mentions.nth(i).locator('a[href*="Entry.aspx"]').count() > 0
+                                
+                                logger.debug(f"    Entry {i+1}: '{text}'")
+                                logger.debug(f"      Classes: '{classes}'")
+                                logger.debug(f"      Has question icon: {has_question}")
+                                logger.debug(f"      Has Entry.aspx link: {has_entry_link}")
+                                
+                                if has_entry_link:
+                                    href = await course_mentions.nth(i).locator('a[href*="Entry.aspx"]').first.get_attribute('href')
+                                    logger.debug(f"      Link href: {href}")
+                            except Exception as e:
+                                logger.debug(f"    Error analyzing entry {i+1}: {e}")
+                        
+                    except Exception as e:
+                        logger.debug(f"  Error in detailed analysis: {e}")
+
+                    # 使用简化的选择器
+                    clickable_entries = (
+                        root
+                        .locator('li:has(img[src*="question"]):has(a[href*="Entry.aspx"])')
+                        .filter(has_text=re.compile(re.escape(course), re.I))
+                    )
+                    
                     try:
                         entry_count = await clickable_entries.count()
-                    except Exception:
+                        logger.debug(f"  Found {entry_count} potentially clickable entries")
+                        
+                        # 进一步过滤：检查链接是否包含正确的日期
+                        actual_clickable = []
+                        for i in range(entry_count):
+                            try:
+                                href = await clickable_entries.nth(i).locator('a[href*="Entry.aspx"]').first.get_attribute('href')
+                                if href and f"d={anchor}" in href:
+                                    actual_clickable.append(i)
+                                    text = (await clickable_entries.nth(i).inner_text()).strip()
+                                    logger.debug(f"    Clickable entry: '{text}' -> {href}")
+                            except Exception:
+                                continue
+                        
+                        entry_count = len(actual_clickable)
+                        logger.debug(f"  Final count after date filtering: {entry_count}")
+                        
+                    except Exception as e:
                         entry_count = 0
+                        actual_clickable = []
+                        logger.debug(f"  Error getting clickable entries: {e}")
+
                     logger.debug(f"Day {anchor}: found {entry_count} clickable entries for {course}")
 
+                    # 处理找到的条目
                     for i in range(entry_count):
                         try:
-                            entry = clickable_entries.nth(i)
+                            if i >= len(actual_clickable):
+                                break
+                                
+                            entry_index = actual_clickable[i]
+                            entry = clickable_entries.nth(entry_index)
                             text = (await entry.inner_text()).strip()
+                            
+                            # 跳过包含PASS的条目
                             if 'PASS' in text.upper():
+                                logger.debug(f"Skipping PASS entry: {text}")
                                 continue
 
                             await entry.scroll_into_view_if_needed()
@@ -501,12 +660,14 @@ async def run_submit(dry_run: bool = False) -> None:
                             if not submitted:
                                 logger.warning(f"Failed {course}: no code was accepted for this entry.")
 
-                            await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                            # 返回到Units页面
+                            await page.goto(day_url, timeout=PAGE_NAV_TIMEOUT_MS)
                             break
+                            
                         except Exception as e:
                             logger.warning(f"An error occurred while processing an entry for {course} on {anchor}: {e}")
                             try:
-                                await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                                await page.goto(day_url, timeout=PAGE_NAV_TIMEOUT_MS)
                             except Exception:
                                 logger.error("Failed to recover by navigating back to Units page. Stopping.")
                                 return
