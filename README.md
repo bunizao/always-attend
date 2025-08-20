@@ -1,94 +1,105 @@
-# always-attend
+# Always Attend
 
-Automates submitting weekly attendance codes on the Monash site, including Okta MFA handling.
+An automated tool to submit weekly attendance codes for your university, with built-in handling for Okta Multi-Factor Authentication (MFA).
 
-Highlights:
-- Runs locally using Python and Playwright.
-- Handles Okta login with TOTP or manual code entry.
-- Reuses a persisted session (`storage_state.json`) to reduce MFA prompts.
+This project is designed for educational and personal use to demonstrate automation capabilities. Please use it responsibly and in accordance with your institution's policies.
 
-## Logging & Debugging
+## Features
 
-- Control verbosity via `LOG_LEVEL` env: `DEBUG` | `INFO` | `WARN` | `ERROR` (default: `INFO`).
-- Disable ANSI colors with `NO_COLOR=1`.
-- Write logs to a file by setting `LOG_FILE=run.log`.
-- Extra scraping dump: `DEBUG_SCRAPING=1` will print page HTML while discovering courses.
-- Reads codes from a JSON URL, a local file, or environment variables.
-- Optional auto-discovery for codes from a base URL.
+- **Automated Submission**: Automatically logs in and submits attendance codes.
+- **Okta MFA Support**: Handles Okta MFA using TOTP (Authenticator App) secrets.
+- **Persistent Sessions**: Reuses your login session to minimize MFA prompts and speed up subsequent runs.
+- **Flexible Code Sources**: Load attendance codes from environment variables, local JSON files, or remote URLs.
+- **GitHub Actions Integration**: Includes a workflow to automatically fetch codes from GitHub Issues.
+- **Cross-Platform**: Runs on any system with Python and Playwright support.
 
-## How it works
+## How It Works
 
-This project consists of two main scripts:
+The project uses [Playwright](https://playwright.dev/python/) to control a browser and simulate user actions. It consists of two main scripts:
 
-1.  `login.py`: An interactive script to log in to the Monash portal and save your session to a file (`storage_state.json`). This is typically done once to prime the session.
-2.  `submit.py`: A script to automatically submit your attendance codes using the saved session.
+1.  `login.py`: An interactive script to perform the initial login. It opens a browser, allowing you to enter your credentials and MFA code. Upon success, it saves your session state (cookies and local storage) to a `storage_state.json` file.
+2.  `submit.py`: A script that uses the saved session from `storage_state.json` to directly access the attendance portal and submit your codes without needing to log in again.
+3.  `main.py`: The main entry point that intelligently checks if a valid session exists. If not, it runs the login process first, then proceeds to submit the codes.
 
-## Quick start
+## Quick Start
 
-1.  **Set up your environment**
+#### 1. Prerequisites
 
-    Create and activate a Python virtual environment:
+- Python 3.8+
+- A university account with Okta MFA enabled.
+- Your TOTP secret key (the Base32 string from your authenticator app).
 
+#### 2. Clone the Repository
+
+```bash
+git clone https://github.com/tutu/always-attend.git
+cd always-attend
+```
+
+#### 3. Set Up a Virtual Environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+# On Windows, use: .venv\Scripts\activate
+```
+
+#### 4. Install Dependencies
+
+This will install the required Python packages and the Chromium browser for Playwright.
+
+```bash
+pip install -r requirements.txt
+playwright install chromium
+```
+
+#### 5. Configure Your Credentials
+
+Copy the example environment file and fill in your details.
+
+```bash
+cp .env.example .env
+```
+
+Now, open the `.env` file in a text editor and set the following:
+- `USERNAME`: Your institutional email address.
+- `PASSWORD`: Your password.
+- `TOTP_SECRET`: Your Base32 encoded TOTP secret key for MFA.
+
+#### 6. Run the Application
+
+Execute the main script. The first time you run it, it will trigger the interactive login process.
+
+```bash
+python main.py
+```
+
+Follow the prompts in the terminal. A browser window will open for you to complete the login. After a valid session is saved, subsequent runs will be non-interactive and submit codes directly.
+
+## Configuration
+
+Attendance codes can be provided in several ways, listed by priority:
+
+1.  **Environment Variables (Per-Slot)**: Highest priority. Define variables matching your class slots.
     ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
+    # Example for .env file
+    "Workshop 1"="CODE123"
+    "Applied 2"="CODE456"
     ```
 
-2.  **Install dependencies**
+2.  **Auto-Discovery from URL**: The script can construct a URL to fetch a JSON file.
+    - `COURSE_CODE`: e.g., "FIT1045"
+    - `WEEK_NUMBER`: e.g., "4"
+    - `CODES_BASE_URL`: The base URL where codes are hosted.
+    - The script will fetch from `{CODES_BASE_URL}/data/{COURSE_CODE}/{WEEK_NUMBER}.json`.
 
-    Install the required Python packages and browser binaries for Playwright:
+3.  **Direct URL (`CODES_URL`)**: A direct URL to a JSON file containing the codes.
 
-    ```bash
-    pip install -U pip setuptools wheel
-    pip install -r requirements.txt
-    python -m playwright install chromium
-    ```
+4.  **Local File (`CODES_FILE`)**: A path to a local JSON file.
 
-3.  **Configure the project**
+5.  **Inline String (`CODES`)**: A semicolon-separated string of `slot:code` pairs.
 
-    Copy the example environment file and edit it with your details:
-
-    ```bash
-    cp .env.example .env
-    ```
-
-    Now, open `.env` and fill in the required values:
-    -   `PORTAL_URL`: The URL to the Monash attendance portal.
-    -   `USERNAME` and `PASSWORD`: Your Monash account credentials.
-    -   `TOTP_SECRET`: Your MFA secret key (Base32). This is the preferred way to handle MFA.
-    -   Set one of the `CODES_*` variables to provide the attendance codes. See the "Code source options" section.
-
-4.  **Log in and create a session**
-
-    Run the interactive login script. This will open a browser window for you to complete the login process.
-
-    ```bash
-    python login.py --headed
-    ```
-
-    Follow the instructions in the terminal. After you have successfully logged in and the `storage_state.json` file is created, you can close the browser.
-
-5.  **Submit your codes**
-
-    Run the submit script to submit your attendance codes:
-
-    ```bash
-    python submit.py
-    ```
-
-    The script will use the saved session in `storage_state.json` to submit the codes without needing to log in again.
-
-## Code source options
-
-You can provide attendance codes to the script in several ways (in order of precedence):
-
-1.  **Per-slot environment variables**: Set environment variables like `WORKSHOP_1=CODE1` and `APPLIED_2=CODE2`.
-2.  **Auto-discovery**: Set `COURSE_CODE`, `WEEK_NUMBER`, and `CODES_BASE_URL` to automatically fetch codes from a URL like `CODES_BASE_URL/data/{COURSE_CODE}/{WEEK_NUMBER}.json`.
-3.  `CODES_URL`: An HTTP(S) URL pointing to a JSON file with the codes.
-4.  `CODES_FILE`: A local path to a JSON file with the codes.
-5.  `CODES`: A semicolon-separated string of `slot:code` pairs (e.g., `"Workshop 1:ABCDE;Applied 1:FGHIJ"`).
-
-**Example JSON format:**
+**Example JSON Format:**
 ```json
 [
   {"date": "2025-08-18", "slot": "Workshop 1", "code": "JZXBA"},
@@ -96,41 +107,46 @@ You can provide attendance codes to the script in several ways (in order of prec
 ]
 ```
 
-## Command-line arguments
+## Usage
 
-### `login.py`
+While `main.py` is the primary entry point, you can use the individual scripts for specific tasks.
+
+#### `main.py` (Recommended)
+The main script handles both login and submission intelligently.
 ```bash
-python login.py [options]
-```
--   `--headed`: (Recommended) Show the browser UI for interactive login.
--   `--portal URL`: Override the portal URL from the environment.
--   `--browser NAME`: Choose the browser (`chromium`, `firefox`, `webkit`).
--   `--check`: After login, verify that the session is valid.
--   `--check-only`: Only verify the current session state without logging in.
+# Run the full process: check session, log in if needed, then submit
+python main.py
 
-### `submit.py`
+# Force the browser to be visible
+python main.py --headed
+
+# Run in dry-run mode to see what codes would be submitted
+python main.py --dry-run
+```
+
+#### `login.py`
+Use this to manually refresh your session state.
 ```bash
-python submit.py [options]
+# Run interactive login to create/update storage_state.json
+python login.py --headed
+
+# Check if the current session is still valid
+python login.py --check-only
 ```
--   `--dry-run`: Parse codes and print them without submitting.
--   `--browser NAME`: Choose the browser (`chromium`, `firefox`, `webkit`).
--   `--headed`: Show the browser UI.
 
-## Environment variables
+#### `submit.py`
+Use this to submit codes when you are sure `storage_state.json` is valid.
+```bash
+# Submit codes using the existing session
+python submit.py
 
--   `PORTAL_URL`: Monash portal entry URL.
--   `USERNAME`, `PASSWORD`: Okta credentials.
--   `TOTP_SECRET`: Base32 secret for 6-digit OTP generation.
--   `MFA_CODE`: A one-off MFA code for a single run (if `TOTP_SECRET` is not set).
--   `CODES_URL`: URL to a JSON file with codes.
--   `CODES_FILE`: Local path to a JSON file with codes.
--   `CODES`: Inline `slot:code;...` string.
--   `COURSE_CODE`, `WEEK_NUMBER`, `CODES_BASE_URL`: For auto-discovery.
--   `ISSUES_NEW_URL`: Issue creation URL to report missing codes (defaults to the project issues page).
--   `BROWSER`: `chromium` (default), `firefox`, or `webkit`.
--   `HEADLESS`: `1` (default) or `0` to show browser UI.
--   `STORAGE_STATE`: Path to save/load the session state (default: `storage_state.json`).
+# See which codes will be submitted without actually submitting them
+python submit.py --dry-run
+```
 
-## GitHub Actions Workflow
+## GitHub Actions Integration
 
-This repository includes a GitHub Actions workflow that can be used to automatically extract attendance codes from issues and create a JSON file. You can then use this JSON file with `CODES_URL` to submit your attendance. This helps in keeping your credentials secure while automating the code retrieval process.
+This repository includes a workflow (`.github/workflows/attendance-from-issues.yml`) that automatically extracts attendance codes from newly created GitHub Issues.
+
+- **How it works**: When an issue with the "Attendance Codes" template is created, a workflow runs, parses the issue body, and saves the codes to a JSON file within the repository (e.g., `data/FIT1045/4.json`).
+- **Usage**: You can then configure `CODES_BASE_URL` to point to your repository's raw content URL (`https://raw.githubusercontent.com/<your-username>/<your-repo>/main`) to automatically pull the latest codes. This setup allows you to update codes just by creating a GitHub issue, without touching the environment variables.

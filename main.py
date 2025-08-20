@@ -76,6 +76,11 @@ async def _ensure_session(headed_default: bool) -> None:
             storage_state=storage_state,
             user_data_dir=user_data_dir,
         )
+    else:
+        # Optional fast path: bypass check and assume session is valid
+        # Set SKIP_SESSION_CHECK=1 to skip future validations (use with care)
+        if os.getenv('SKIP_SESSION_CHECK') in ('1','true','True'):
+            return
 
 
 async def _run_submit(dry_run: bool) -> None:
