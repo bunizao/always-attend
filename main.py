@@ -5,7 +5,7 @@ import argparse
 import importlib
 
 from env_utils import load_env
-
+from logger import logger
 
 def _is_storage_state_effective(path: str) -> bool:
     try:
@@ -31,13 +31,11 @@ async def _ensure_session(headed_default: bool) -> None:
 
     needs_login = False
     if user_data_dir:
-        # Persistent profile: skip file-based check; rely on portal check
         needs_login = False
     else:
         if not os.path.exists(storage_state) or not _is_storage_state_effective(storage_state):
             needs_login = True
         else:
-            # Optional: quick validation by opening portal and checking for login fields
             login_mod = importlib.import_module('login')
             ok = await login_mod.check_session(
                 check_url=portal_url,
@@ -61,8 +59,6 @@ async def _ensure_session(headed_default: bool) -> None:
             user_data_dir=user_data_dir,
         )
     else:
-        # Optional fast path: bypass check and assume session is valid
-        # Set SKIP_SESSION_CHECK=1 to skip future validations (use with care)
         if os.getenv('SKIP_SESSION_CHECK') in ('1','true','True'):
             return
 
@@ -93,13 +89,11 @@ if __name__ == "__main__":
     if args.week:
         os.environ['WEEK_NUMBER'] = str(args.week)
 
-    # Derive default headed for login flows: headed by default unless HEADLESS=1
     env_headless = os.getenv('HEADLESS')
     headed_default = (env_headless in ('0', 'false', 'False', None))
 
     if args.login_only:
         asyncio.run(_ensure_session(headed_default=headed_default))
     else:
-        # Ensure session then run submit
         asyncio.run(_ensure_session(headed_default=headed_default))
         asyncio.run(_run_submit(dry_run=bool(args.dry_run or os.getenv('DRY_RUN') in ('1','true','True'))))
