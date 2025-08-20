@@ -500,9 +500,9 @@ async def try_submit_code_anywhere(page: Page, base: str, code: str, date_anchor
         for sel in candidates:
             try:
                 el = page.locator(sel).first
-                if await el.is_visible(timeout=1000):
+                if await el.is_visible(timeout=VISIBLE_WAIT_MS):
                     await el.click()
-                    await page.wait_for_timeout(600)
+                    await page.wait_for_timeout(min(300, VISIBLE_WAIT_MS))
             except Exception:
                 continue
     
@@ -646,9 +646,29 @@ async def run_submit(dry_run: bool = False) -> None:
             # Global timeout baseline and config
             start_time = time.monotonic()
 
+            # Tuning knobs (env-configurable)
+            def _env_float(name: str, default: float) -> float:
+                try:
+                    return float(os.getenv(name, str(default)))
+                except Exception:
+                    return default
+
+            def _env_int(name: str, default: int) -> int:
+                try:
+                    return int(os.getenv(name, str(default)))
+                except Exception:
+                    return default
+
+            PAGE_NAV_TIMEOUT_MS = _env_int('PAGE_NAV_TIMEOUT_MS', 25000)
+            PANEL_WAIT_MS = _env_int('PANEL_WAIT_MS', 6000)
+            VISIBLE_WAIT_MS = _env_int('VISIBLE_WAIT_MS', 700)
+            DAY_SLEEP_MIN = _env_float('DAY_SLEEP_MIN', 1.0)
+            DAY_SLEEP_MAX = _env_float('DAY_SLEEP_MAX', 2.2)
+            FALLBACK_GENERIC_SCAN = os.getenv('FALLBACK_GENERIC_SCAN') in ('1','true','True')
+
             attendance_info_url = f"{base}/student/AttendanceInfo.aspx"
             log_step(f"Navigating to attendance info page: {attendance_info_url}")
-            await page.goto(attendance_info_url, timeout=60_000)
+            await page.goto(attendance_info_url, timeout=PAGE_NAV_TIMEOUT_MS)
 
             enrolled_courses = await get_enrolled_courses(page)
             if not enrolled_courses:
@@ -743,25 +763,125 @@ async def run_submit(dry_run: bool = False) -> None:
                     except Exception:
                         pass
                     if idx > 0:
-                        delay = random.uniform(2.0, 5.0)
+                        # Sleep only between days; keep it short and configurable
+                        delay = random.uniform(DAY_SLEEP_MIN, DAY_SLEEP_MAX)
                         log_debug(f"Sleeping {delay:.2f}s before next day panel...")
                         await asyncio.sleep(delay)
                     units_url = f"{base}/student/Units.aspx#{anchor}"
                     log_step(f"Open day panel: {units_url}")
                     try:
-                        await page.goto(units_url, timeout=60_000)
-                        await page.wait_for_selector(f'#dayPanel_{anchor}', timeout=15_000)
+                        await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                        await page.wait_for_selector(f'#dayPanel_{anchor}', timeout=PANEL_WAIT_MS)
                     except Exception:
                         continue
                     day_panel = page.locator(f'#dayPanel_{anchor}')
-                    # Consider anchors, buttons, and ARIA links/buttons as entry triggers
-                    links = day_panel.locator('a, button, [role="link"], [role="button"]')
-                    try:
-                        n = await links.count()
-                    except Exception:
-                        n = 0
+                    # Strategy 1: find containers that mention the course, then click a link/button inside
+                    containers = day_panel.locator(
+                        f'tr:has-text("{course}") , li:has-text("{course}") , div:has-text("{course}") , section:has-text("{course}") , article:has-text("{course}")'
+                    )
                     processed_this_day = False
-                    for i in range(n):
+                    tried_entries = 0
+                    try:
+                        ccount = await containers.count()
+                    except Exception:
+                        ccount = 0
+                    # Fast path: if no course containers and fallback disabled, skip this day quickly
+                    if ccount == 0 and not FALLBACK_GENERIC_SCAN:
+                        continue
+                    for i in range(ccount):
+                        try:
+                            cont = containers.nth(i)
+                            ctext = (await cont.inner_text()).strip()
+                        except Exception:
+                            continue
+                        if re.search(r'\bPASS\b', ctext, flags=re.I):
+                            continue
+                        # Find a clickable within this container
+                        el = cont.locator('a, button, [role="link"], [role="button"]').first
+                        try:
+                            if not await el.is_visible(timeout=VISIBLE_WAIT_MS):
+                                continue
+                            await el.click()
+                            await page.wait_for_load_state('domcontentloaded', timeout=PANEL_WAIT_MS)
+                        except Exception:
+                            continue
+                        tried_entries += 1
+                        processed_this_day = True
+                        # Try week codes
+                        log_step(f"Processing {course}...")
+                        submitted = False
+                        for code_val in codes:
+                            ok, msg = await submit_code_on_entry(page, code_val)
+                            if ok:
+                                log_ok(f"Submitted {course}: {msg}")
+                                submitted = True
+                                break
+                        if not submitted:
+                            log_warn(f"Failed {course}: no code accepted for this entry")
+                        # Return to day panel
+                        try:
+                            await page.go_back(timeout=PANEL_WAIT_MS)
+                        except Exception:
+                            try:
+                                await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                            except Exception:
+                                pass
+                    # Strategy 2: fallback to scanning generic links/buttons if nothing matched containers
+                    if tried_entries == 0:
+                        links = day_panel.locator('a, button, [role="link"], [role="button"]')
+                        try:
+                            n = await links.count()
+                        except Exception:
+                            n = 0
+                        for i in range(n):
+                            try:
+                                el = links.nth(i)
+                                text = (await el.inner_text()).strip()
+                            except Exception:
+                                continue
+                            if re.search(r'\bPASS\b', text, flags=re.I):
+                                continue
+                            # Click first, then verify course or code input exists
+                            try:
+                                await el.click()
+                                await page.wait_for_load_state('domcontentloaded', timeout=PANEL_WAIT_MS)
+                            except Exception:
+                                continue
+                            processed_this_day = True
+                            course_ok = False
+                            try:
+                                if await page.locator(f'text={course}').first.is_visible(timeout=VISIBLE_WAIT_MS):
+                                    course_ok = True
+                            except Exception:
+                                course_ok = False
+                            # In fallback mode, require explicit course confirmation on the opened page
+                            if not course_ok:
+                                try:
+                                    await page.go_back(timeout=PANEL_WAIT_MS)
+                                except Exception:
+                                    try:
+                                        await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                                    except Exception:
+                                        pass
+                                continue
+                            # Try week codes
+                            log_step(f"Processing {course}...")
+                            submitted = False
+                            for code_val in codes:
+                                ok, msg = await submit_code_on_entry(page, code_val)
+                                if ok:
+                                    log_ok(f"Submitted {course}: {msg}")
+                                    submitted = True
+                                    break
+                            if not submitted:
+                                log_warn(f"Failed {course}: no code accepted for this entry")
+                            try:
+                                await page.go_back(timeout=PANEL_WAIT_MS)
+                            except Exception:
+                                try:
+                                    await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                                except Exception:
+                                    pass
                         try:
                             el = links.nth(i)
                             text = (await el.inner_text()).strip()
