@@ -501,9 +501,9 @@ async def try_submit_code_anywhere(page: Page, base: str, code: str, date_anchor
         for sel in candidates:
             try:
                 el = page.locator(sel).first
-                if await el.is_visible(timeout=VISIBLE_WAIT_MS):
+                if await el.is_visible(timeout=1000):
                     await el.click()
-                    await page.wait_for_timeout(min(300, VISIBLE_WAIT_MS))
+                    await page.wait_for_timeout(300)
             except Exception:
                 continue
     
@@ -676,6 +676,35 @@ async def run_submit(dry_run: bool = False) -> None:
                 log_err("No enrolled courses found on the page.")
                 return
 
+            # Early availability check: for each course, verify local database presence for the target week.
+            # Do not interrupt execution; only inform the user how to contribute missing data.
+            def _find_latest_week(course: str) -> Optional[str]:
+                try:
+                    course_dir = os.path.join('data', ''.join(ch for ch in course if ch.isalnum()))
+                    if not os.path.isdir(course_dir):
+                        return None
+                    weeks = []
+                    for name in os.listdir(course_dir):
+                        if name.endswith('.json'):
+                            base = name[:-5]
+                            if base.isdigit():
+                                weeks.append(int(base))
+                    if not weeks:
+                        return None
+                    return str(max(weeks))
+                except Exception:
+                    return None
+
+            issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/bunizao/always-attend/issues/new"
+            WEEK_NUMBER = os.getenv("WEEK_NUMBER") or None
+            for course in enrolled_courses:
+                target_week = WEEK_NUMBER or _find_latest_week(course)
+                course_sanitized = ''.join(ch for ch in course if ch.isalnum())
+                local_path = os.path.join('data', course_sanitized, f"{target_week}.json") if target_week else None
+                if not target_week or not (local_path and os.path.exists(local_path)):
+                    log_warn(f"Missing local codes for {course} week {target_week or '?'}.")
+                    log_info(f"You can add them via an Issue: {issues_url}")
+
             def find_latest_week(course: str) -> Optional[str]:
                 try:
                     course_dir = os.path.join('data', ''.join(ch for ch in course if ch.isalnum()))
@@ -776,12 +805,80 @@ async def run_submit(dry_run: bool = False) -> None:
                     except Exception:
                         continue
                     day_panel = page.locator(f'#dayPanel_{anchor}')
-                    # Strategy 1: find containers that mention the course, then click a link/button inside
-                    containers = day_panel.locator(
-                        f'tr:has-text("{course}") , li:has-text("{course}") , div:has-text("{course}") , section:has-text("{course}") , article:has-text("{course}")'
-                    )
                     processed_this_day = False
                     tried_entries = 0
+
+                    # Fast path A: direct anchors that already include the course text
+                    links_course = day_panel.locator(f'a:has-text(/{course}/i)')
+                    try:
+                        lcount = await links_course.count()
+                    except Exception:
+                        lcount = 0
+                    for i in range(lcount):
+                        try:
+                            el = links_course.nth(i)
+                            text = (await el.inner_text()).strip()
+                            if re.search(r'\bPASS\b', text, flags=re.I):
+                                continue
+                            await el.scroll_into_view_if_needed()
+                            await el.click()
+                            # Small grace period for dynamic content
+                            await page.wait_for_timeout(200)
+                            # Verify page belongs to course or has code input
+                            course_ok = False
+                            try:
+                                if await page.locator(f'text={course}').first.is_visible(timeout=VISIBLE_WAIT_MS):
+                                    course_ok = True
+                            except Exception:
+                                course_ok = False
+                            page_has_code_input = False
+                            for sel in ['input[name="code"]','input[id*="code" i]','input[placeholder*="code" i]','input[type="text"]']:
+                                try:
+                                    if await page.locator(sel).first.is_visible(timeout=VISIBLE_WAIT_MS):
+                                        page_has_code_input = True
+                                        break
+                                except Exception:
+                                    continue
+                            if not (course_ok or page_has_code_input):
+                                try:
+                                    await page.go_back(timeout=PANEL_WAIT_MS)
+                                except Exception:
+                                    try:
+                                        await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                                    except Exception:
+                                        pass
+                                continue
+                            # Process codes
+                            processed_this_day = True
+                            tried_entries += 1
+                            log_step(f"Processing {course}...")
+                            submitted = False
+                            for code_val in codes:
+                                ok, msg = await submit_code_on_entry(page, code_val)
+                                if ok:
+                                    log_ok(f"Submitted {course}: {msg}")
+                                    submitted = True
+                                    break
+                            if not submitted:
+                                log_warn(f"Failed {course}: no code accepted for this entry")
+                            try:
+                                await page.go_back(timeout=PANEL_WAIT_MS)
+                            except Exception:
+                                try:
+                                    await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            # Any unexpected issue within direct anchor flow: skip this link
+                            continue
+                    if tried_entries and not FALLBACK_GENERIC_SCAN:
+                        # If we processed some entries via direct anchors and fallback is disabled, skip remaining strategies
+                        continue
+
+                    # Strategy 1: find containers that mention the course, then click a link/button inside
+                    containers = day_panel.locator(
+                        f'tr:has-text(/{course}/i) , li:has-text(/{course}/i) , div:has-text(/{course}/i) , section:has-text(/{course}/i) , article:has-text(/{course}/i)'
+                    )
                     try:
                         ccount = await containers.count()
                     except Exception:
@@ -883,94 +980,6 @@ async def run_submit(dry_run: bool = False) -> None:
                                     await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
                                 except Exception:
                                     pass
-                        try:
-                            el = links.nth(i)
-                            text = (await el.inner_text()).strip()
-                        except Exception:
-                            continue
-                        # Skip PASS sessions early by visible text
-                        if re.search(r'\bPASS\b', text, flags=re.I):
-                            continue
-                        # Determine if this link belongs to the course. Some pages only show slot names on the link,
-                        # so also check attributes and nearest container text up to the day panel.
-                        match = False
-                        try:
-                            href = (await el.get_attribute('href')) or ''
-                        except Exception:
-                            href = ''
-                        try:
-                            title_attr = (await el.get_attribute('title')) or ''
-                        except Exception:
-                            title_attr = ''
-                        try:
-                            aria = (await el.get_attribute('aria-label')) or ''
-                        except Exception:
-                            aria = ''
-                        container_txt = ''
-                        try:
-                            container_txt = (await el.evaluate("(e, rootSel) => { const root = e.closest(rootSel); let cur=e; let acc=''; while(cur && cur!==root){ acc += ' ' + (cur.innerText||''); cur = cur.parentElement; } acc += ' ' + (root?root.innerText:''); return acc; }", f"#dayPanel_{anchor}")) or ''
-                        except Exception:
-                            pass
-                        haystack = ' '.join([text, href, title_attr, aria, container_txt])
-                        if re.search(re.escape(course), haystack, flags=re.I):
-                            match = True
-                        # We now click even if course name isn't on the element; we'll verify on the opened page
-                        # Open entry
-                        try:
-                            await el.click()
-                            await page.wait_for_load_state('domcontentloaded', timeout=15_000)
-                        except Exception:
-                            continue
-                        processed_this_day = True
-                        # Verify this entry is for the course (or allow if course is present in page text)
-                        course_ok = False
-                        try:
-                            if await page.locator(f'text={course}').first.is_visible(timeout=1000):
-                                course_ok = True
-                        except Exception:
-                            course_ok = False
-                        # Quick probe for a code input on the page
-                        input_selectors = [
-                            'input[name="code"]','input[id*="code" i]','input[placeholder*="code" i]','input[type="text"]'
-                        ]
-                        page_has_code_input = False
-                        for sel in input_selectors:
-                            try:
-                                if await page.locator(sel).first.is_visible(timeout=800):
-                                    page_has_code_input = True
-                                    break
-                            except Exception:
-                                continue
-                        if not (course_ok or page_has_code_input):
-                            # Not our course and no code input; skip
-                            try:
-                                await page.go_back(timeout=8_000)
-                            except Exception:
-                                try:
-                                    await page.goto(units_url, timeout=30_000)
-                                except Exception:
-                                    pass
-                            continue
-                        # Try each code (no per-code sleep; sleep only between days)
-                        log_step(f"Processing {course}...")
-                        submitted = False
-                        for code_val in codes:
-                            ok, msg = await submit_code_on_entry(page, code_val)
-                            if ok:
-                                log_ok(f"Submitted {course}: {msg}")
-                                submitted = True
-                                break
-                        if not submitted:
-                            log_warn(f"Failed {course}: no code accepted for this entry")
-                        # Return to day panel for further entries
-                        try:
-                            await page.go_back(timeout=15_000)
-                        except Exception:
-                            # Reload the day panel if history not available
-                            try:
-                                await page.goto(units_url, timeout=60_000)
-                            except Exception:
-                                pass
                     # Continue scanning remaining days unless a future day is reached
         finally:
             # Save storage state only for non-persistent contexts

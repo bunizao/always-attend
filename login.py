@@ -4,7 +4,6 @@ import asyncio
 
 from playwright.async_api import async_playwright
 from logger import log_info, log_warn
-from env_utils import load_env
 
 
 def _is_storage_state_effective(path: str) -> bool:
@@ -126,7 +125,22 @@ async def check_session(check_url: str,
             page = await context.new_page()
 
         try:
-            await page.goto(check_url, timeout=60_000)
+            # Robust navigation with retries to avoid transient errors (e.g., net::ERR_SOCKET_NOT_CONNECTED)
+            retries = 2
+            timeout_ms = int(os.getenv("LOGIN_CHECK_TIMEOUT_MS", "60000"))
+            last_err = None
+            for attempt in range(retries + 1):
+                try:
+                    await page.goto(check_url, timeout=timeout_ms)
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    log_warn(f"Session check navigation failed (attempt {attempt+1}/{retries+1}): {e}")
+                    await asyncio.sleep(0.8)
+            if last_err is not None:
+                # Treat as not logged in rather than crashing the app
+                return False
             # If we are redirected to Okta domain, likely not authenticated
             host = urlparse(page.url).netloc.lower()
             if 'okta' in host:
