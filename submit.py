@@ -10,18 +10,12 @@ import re
 import random
 import time
 
+import logging
+import logging_config  # noqa: F401
 import pyotp
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
 
-# Unified logger
-from logger import (
-    log_debug,
-    log_info,
-    log_step,
-    log_ok,
-    log_warn,
-    log_err,
-)
+logger = logging.getLogger(__name__)
 
 
 def to_base(origin_url: str) -> str:
@@ -74,11 +68,11 @@ async def get_enrolled_courses(page: Page) -> List[str]:
     Scrapes the page to find all enrolled course codes.
     This function assumes that course codes are 3 letters followed by 4 digits.
     """
-    log_step("Scraping page for enrolled courses...")
+    logger.step("Scraping page for enrolled courses...")
     try:
         if os.getenv("DEBUG_SCRAPING") == "1":
-            log_info("Debug scraping enabled. Page content will be printed.")
-            log_debug(await page.content())
+            logger.info("Debug scraping enabled. Page content will be printed.")
+            logger.debug(await page.content())
 
         # Try to find course codes in links first, as they are more likely to be there.
         all_text = " ".join(await page.locator('a').all_inner_texts())
@@ -89,10 +83,10 @@ async def get_enrolled_courses(page: Page) -> List[str]:
 
         course_codes = re.findall(r'\b([A-Z]{3}\d{4})\b', all_text)
         unique_codes = sorted(list(set(course_codes)))
-        log_info(f"Found {len(unique_codes)} enrolled courses: {unique_codes}")
+        logger.info(f"Found {len(unique_codes)} enrolled courses: {unique_codes}")
         return unique_codes
     except Exception as e:
-        log_warn(f"Could not scrape enrolled courses: {e}")
+        logger.warning(f"Could not scrape enrolled courses: {e}")
         return []
 
 
@@ -112,7 +106,7 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
             # Omit date when unknown (avoid nulls in JSON)
             result.append({"slot": slot_name, "code": var_value.strip()})
     if result:
-        log_info(f"Loaded {len(result)} codes from per-slot environment variables")
+        logger.info(f"Loaded {len(result)} codes from per-slot environment variables")
         return result
 
     # 2) Auto-discovery via COURSE_CODE/WEEK_NUMBER/CODES_BASE_URL
@@ -132,10 +126,10 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
                         if code_val:
                             result.append({"slot": item.get("slot"), "date": item.get("date"), "code": code_val})
                 if result:
-                    log_info(f"Loaded {len(result)} codes via auto-discovery: {auto_url}")
+                    logger.info(f"Loaded {len(result)} codes via auto-discovery: {auto_url}")
                     return result
             except Exception as e:
-                log_warn(f"Auto-discovery failed for {course_code} week {week_number}: {e}")
+                logger.warning(f"Auto-discovery failed for {course_code} week {week_number}: {e}")
 
     # 2b) Local repository data fallback: data/{course}/{week}.json
     if course_code and week_number and not (CODES_BASE_URL or CODES_URL or CODES_FILE):
@@ -153,10 +147,10 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
                             if code_val:
                                 result.append({"slot": item.get("slot"), "date": item.get("date"), "code": code_val})
                     if result:
-                        log_info(f"Loaded {len(result)} codes from local data: {local_path}")
+                        logger.info(f"Loaded {len(result)} codes from local data: {local_path}")
                         return result
                 except Exception as e:
-                    log_warn(f"Failed to load local data file {local_path}: {e}")
+                    logger.warning(f"Failed to load local data file {local_path}: {e}")
 
     # 3) CODES_URL
     if CODES_URL:
@@ -171,10 +165,10 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
                     if code_val:
                         result.append({"slot": item.get("slot"), "date": item.get("date"), "code": code_val})
             if result:
-                log_info(f"Loaded {len(result)} codes from CODES_URL")
+                logger.info(f"Loaded {len(result)} codes from CODES_URL")
                 return result
         except Exception as e:
-            log_warn(f"Failed to fetch CODES_URL: {e}")
+            logger.warning(f"Failed to fetch CODES_URL: {e}")
 
     # 4) CODES_FILE
     if CODES_FILE and os.path.exists(CODES_FILE):
@@ -187,10 +181,10 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
                     if code_val:
                         result.append({"slot": item.get("slot"), "date": item.get("date"), "code": code_val})
             if result:
-                log_info(f"Loaded {len(result)} codes from CODES_FILE={CODES_FILE}")
+                logger.info(f"Loaded {len(result)} codes from CODES_FILE={CODES_FILE}")
                 return result
         except Exception as e:
-            log_warn(f"Failed to parse CODES_FILE: {e}")
+            logger.warning(f"Failed to parse CODES_FILE: {e}")
 
     # 5) CODES inline
     codes_str = os.getenv("CODES")
@@ -202,7 +196,7 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
                 # Omit date when unknown
                 result.append({"slot": slot.strip(), "code": code.strip()})
         if result:
-            log_info(f"Loaded {len(result)} codes from CODES inline")
+            logger.info(f"Loaded {len(result)} codes from CODES inline")
     return result
 
 
@@ -267,7 +261,7 @@ async def login(page: Page) -> None:
     except Exception:
         pass
 
-    log_step("Filling username/password...")
+    logger.step("Filling username/password...")
     user_ok = await fill_first_match(page, [
         'input[name="username"]','input[autocomplete="username"]','input[type="email"]','input[placeholder*="user" i]','input[placeholder*="email" i]','#okta-signin-username'], os.getenv("USERNAME"))
     pass_ok = await fill_first_match(page, [
@@ -288,7 +282,7 @@ async def login(page: Page) -> None:
     if not otp:
         raise RuntimeError("No MFA code available. Set TOTP_SECRET or MFA_CODE.")
 
-    log_step("Submitting MFA code...")
+    logger.step("Submitting MFA code...")
     otp_ok = await fill_first_match(page, [
         'input[name="otp"]','input[name="code"]','input[name="passcode"]','input[autocomplete="one-time-code"]','input[inputmode="numeric"]','input[type="tel"]','input[id*="code" i]','input[placeholder*="code" i]','input[placeholder*="OTP" i]'], otp)
 
@@ -367,7 +361,7 @@ async def find_and_open_slot(page: Page, base_url: str, date_str: Optional[str],
         units_url = f"{base_url}/student/Units.aspx#{anchor}"
     else:
         units_url = f"{base_url}/student/Units.aspx"
-    log_step(f"Open schedule page: {units_url}")
+    logger.step(f"Open schedule page: {units_url}")
     await page.goto(units_url, timeout=60_000)
     if date_str:
         day_panel_sel = f'#dayPanel_{anchor}'
@@ -387,7 +381,7 @@ async def find_and_open_slot(page: Page, base_url: str, date_str: Optional[str],
     candidates = search_scope.locator(f'a:has-text("{label}")')
     try:
         count = await candidates.count()
-        log_info(f"Found {count} candidates for label '{label}' (exact)")
+        logger.info(f"Found {count} candidates for label '{label}' (exact)")
         if count > 0:
             await candidates.nth(0).click()
             return True
@@ -399,7 +393,7 @@ async def find_and_open_slot(page: Page, base_url: str, date_str: Optional[str],
     candidates = search_scope.locator(f'a:has-text(/{regex}/i)')
     try:
         count = await candidates.count()
-        log_info(f"Found {count} candidates for label /{regex}/i (regex)")
+        logger.info(f"Found {count} candidates for label /{regex}/i (regex)")
         if count > 0:
             await candidates.nth(0).click()
             return True
@@ -410,7 +404,7 @@ async def find_and_open_slot(page: Page, base_url: str, date_str: Optional[str],
     candidates = search_scope.locator(f'a:has-text(/{la}/i)')
     try:
         count = await candidates.count()
-        log_info(f"Found {count} candidates for tokens /{la}/i (lookahead)")
+        logger.info(f"Found {count} candidates for tokens /{la}/i (lookahead)")
         if count > 0:
             await candidates.nth(0).click()
             return True
@@ -429,7 +423,7 @@ SUCCESS_HINT_SELECTORS = ['text=/success/i','text=/submitted/i']
 
 
 async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
-    log_debug(f"Submitting code: {code}")
+    logger.debug(f"Submitting code: {code}")
     filled = await fill_first_match(page, [
         'input[name="code"]','input[id*="code" i]','input[placeholder*="code" i]','input[type="text"]'], code)
     if not filled:
@@ -508,7 +502,7 @@ async def try_submit_code_anywhere(page: Page, base: str, code: str, date_anchor
     
     for url in targets:
         try:
-            log_debug(f"Try submit on: {url}")
+            logger.debug(f"Try submit on: {url}")
             await page.goto(url, timeout=45_000)
         except Exception:
             continue
@@ -588,7 +582,7 @@ async def run_submit(dry_run: bool = False) -> None:
     WEEK_NUMBER = os.getenv("WEEK_NUMBER")
 
     if not USER_DATA_DIR and os.path.exists(STORAGE_STATE) and not _is_storage_state_effective(STORAGE_STATE):
-        log_warn(f"Detected empty storage state at {STORAGE_STATE}; opening interactive login...")
+        logger.warning(f"Detected empty storage state at {STORAGE_STATE}; opening interactive login...")
         try:
             login_mod = importlib.import_module('login')
             await login_mod.run_login(
@@ -600,7 +594,7 @@ async def run_submit(dry_run: bool = False) -> None:
                 user_data_dir=None,
             )
         except Exception as e:
-            log_warn(f"Auto login failed: {e}. Please run `python login.py --headed` manually.")
+            logger.warning(f"Auto login failed: {e}. Please run `python login.py --headed` manually.")
             return
 
     async with async_playwright() as p:
@@ -609,14 +603,14 @@ async def run_submit(dry_run: bool = False) -> None:
         if BROWSER == 'chromium' and BROWSER_CHANNEL:
             launch_kwargs["channel"] = BROWSER_CHANNEL
 
-        log_info(f"Launching browser: {BROWSER} channel={launch_kwargs.get('channel','default')} headless={HEADLESS}")
+        logger.info(f"Launching browser: {BROWSER} channel={launch_kwargs.get('channel','default')} headless={HEADLESS}")
         context = None
         browser = None
         if USER_DATA_DIR:
             try:
                 context = await browser_type.launch_persistent_context(USER_DATA_DIR, **launch_kwargs)
             except Exception as e:
-                log_warn(f"Failed to launch with system channel '{BROWSER_CHANNEL}': {e}. Falling back to default.")
+                logger.warning(f"Failed to launch with system channel '{BROWSER_CHANNEL}': {e}. Falling back to default.")
                 launch_kwargs.pop('channel', None)
                 context = await browser_type.launch_persistent_context(USER_DATA_DIR, **launch_kwargs)
             page = await context.new_page()
@@ -624,7 +618,7 @@ async def run_submit(dry_run: bool = False) -> None:
             try:
                 browser = await browser_type.launch(**launch_kwargs)
             except Exception as e:
-                log_warn(f"Failed to launch with system channel '{BROWSER_CHANNEL}': {e}. Falling back to default.")
+                logger.warning(f"Failed to launch with system channel '{BROWSER_CHANNEL}': {e}. Falling back to default.")
                 launch_kwargs.pop('channel', None)
                 browser = await browser_type.launch(**launch_kwargs)
             context_kwargs = {}
@@ -640,7 +634,7 @@ async def run_submit(dry_run: bool = False) -> None:
             except Exception:
                 pass
             if not await is_authenticated(page):
-                log_warn("Not authenticated; running login flow...")
+                logger.warning("Not authenticated; running login flow...")
                 await login(page)
             base = to_base(page.url) or to_base(PORTAL_URL)
             # Global timeout baseline and config
@@ -667,12 +661,12 @@ async def run_submit(dry_run: bool = False) -> None:
             FALLBACK_GENERIC_SCAN = os.getenv('FALLBACK_GENERIC_SCAN') in ('1','true','True')
 
             attendance_info_url = f"{base}/student/AttendanceInfo.aspx"
-            log_step(f"Navigating to attendance info page: {attendance_info_url}")
+            logger.step(f"Navigating to attendance info page: {attendance_info_url}")
             await page.goto(attendance_info_url, timeout=PAGE_NAV_TIMEOUT_MS)
 
             enrolled_courses = await get_enrolled_courses(page)
             if not enrolled_courses:
-                log_err("No enrolled courses found on the page.")
+                logger.error("No enrolled courses found on the page.")
                 return
 
             def find_latest_week(course: str) -> Optional[str]:
@@ -693,11 +687,11 @@ async def run_submit(dry_run: bool = False) -> None:
                     return None
 
             for course in enrolled_courses:
-                log_step(f"Processing course: {course}")
+                logger.step(f"Processing course: {course}")
                 # Determine target week: explicit WEEK_NUMBER or latest available week
                 week_for_course = WEEK_NUMBER or find_latest_week(course)
                 if not week_for_course:
-                    log_warn(f"No week detected for {course}. Add data/{course}/<week>.json or set WEEK_NUMBER.")
+                    logger.warning(f"No week detected for {course}. Add data/{course}/<week>.json or set WEEK_NUMBER.")
                     continue
 
                 entries = parse_codes(course_code=course, week_number=week_for_course)
@@ -713,12 +707,12 @@ async def run_submit(dry_run: bool = False) -> None:
                             pass
 
                 if not codes:
-                    log_warn(f"No attendance codes found for {course} week {week_for_course}.")
+                    logger.warning(f"No attendance codes found for {course} week {week_for_course}.")
                     issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/bunizao/always-attend/issues/new"
-                    log_info(f"You can add missing codes by creating an issue at: {issues_url}")
+                    logger.info(f"You can add missing codes by creating an issue at: {issues_url}")
                     continue
 
-                log_ok(f"Loaded {len(codes)} codes for {course} (week {week_for_course})")
+                logger.ok(f"Loaded {len(codes)} codes for {course} (week {week_for_course})")
 
                 if dry_run:
                     for code in codes:
@@ -752,23 +746,23 @@ async def run_submit(dry_run: bool = False) -> None:
                     except Exception:
                         GLOBAL_TIMEOUT_SEC = 900
                     if GLOBAL_TIMEOUT_SEC and (time.monotonic() - start_time) > GLOBAL_TIMEOUT_SEC:
-                        log_warn("Global timeout reached; stopping run.")
+                        logger.warning("Global timeout reached; stopping run.")
                         return
                     # Stop when reaching future days (cannot submit future codes)
                     try:
                         adt = parse_anchor(anchor)
                         if adt and adt.date() > today_date:
-                            log_info("Reached future day; stopping this week's scan.")
+                            logger.info("Reached future day; stopping this week's scan.")
                             break
                     except Exception:
                         pass
                     if idx > 0:
                         # Sleep only between days; keep it short and configurable
                         delay = random.uniform(DAY_SLEEP_MIN, DAY_SLEEP_MAX)
-                        log_debug(f"Sleeping {delay:.2f}s before next day panel...")
+                        logger.debug(f"Sleeping {delay:.2f}s before next day panel...")
                         await asyncio.sleep(delay)
                     units_url = f"{base}/student/Units.aspx#{anchor}"
-                    log_step(f"Open day panel: {units_url}")
+                    logger.step(f"Open day panel: {units_url}")
                     try:
                         await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
                         await page.wait_for_selector(f'#dayPanel_{anchor}', timeout=PANEL_WAIT_MS)
@@ -808,16 +802,16 @@ async def run_submit(dry_run: bool = False) -> None:
                         tried_entries += 1
                         processed_this_day = True
                         # Try week codes
-                        log_step(f"Processing {course}...")
+                        logger.step(f"Processing {course}...")
                         submitted = False
                         for code_val in codes:
                             ok, msg = await submit_code_on_entry(page, code_val)
                             if ok:
-                                log_ok(f"Submitted {course}: {msg}")
+                                logger.ok(f"Submitted {course}: {msg}")
                                 submitted = True
                                 break
                         if not submitted:
-                            log_warn(f"Failed {course}: no code accepted for this entry")
+                            logger.warning(f"Failed {course}: no code accepted for this entry")
                         # Return to day panel
                         try:
                             await page.go_back(timeout=PANEL_WAIT_MS)
@@ -865,16 +859,16 @@ async def run_submit(dry_run: bool = False) -> None:
                                         pass
                                 continue
                             # Try week codes
-                            log_step(f"Processing {course}...")
+                            logger.step(f"Processing {course}...")
                             submitted = False
                             for code_val in codes:
                                 ok, msg = await submit_code_on_entry(page, code_val)
                                 if ok:
-                                    log_ok(f"Submitted {course}: {msg}")
+                                    logger.ok(f"Submitted {course}: {msg}")
                                     submitted = True
                                     break
                             if not submitted:
-                                log_warn(f"Failed {course}: no code accepted for this entry")
+                                logger.warning(f"Failed {course}: no code accepted for this entry")
                             try:
                                 await page.go_back(timeout=PANEL_WAIT_MS)
                             except Exception:
@@ -951,16 +945,16 @@ async def run_submit(dry_run: bool = False) -> None:
                                     pass
                             continue
                         # Try each code (no per-code sleep; sleep only between days)
-                        log_step(f"Processing {course}...")
+                        logger.step(f"Processing {course}...")
                         submitted = False
                         for code_val in codes:
                             ok, msg = await submit_code_on_entry(page, code_val)
                             if ok:
-                                log_ok(f"Submitted {course}: {msg}")
+                                logger.ok(f"Submitted {course}: {msg}")
                                 submitted = True
                                 break
                         if not submitted:
-                            log_warn(f"Failed {course}: no code accepted for this entry")
+                            logger.warning(f"Failed {course}: no code accepted for this entry")
                         # Return to day panel for further entries
                         try:
                             await page.go_back(timeout=15_000)

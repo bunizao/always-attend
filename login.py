@@ -2,8 +2,11 @@ import os
 import argparse
 import asyncio
 
+import logging
+import logging_config  # noqa: F401
 from playwright.async_api import async_playwright
-from logger import log_info, log_warn
+
+logger = logging.getLogger(__name__)
 
 
 def load_env_file(path: str = ".env") -> None:
@@ -57,7 +60,7 @@ async def run_login(portal_url: str,
         else:
             browser_type = p.chromium
 
-        log_info("Opening browser for interactive login...")
+        logger.info("Opening browser for interactive login...")
         if user_data_dir:
             try:
                 context = await browser_type.launch_persistent_context(
@@ -66,7 +69,7 @@ async def run_login(portal_url: str,
                     channel=channel,
                 )
             except Exception as e:
-                log_warn(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
+                logger.warning(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
                 context = await browser_type.launch_persistent_context(
                     user_data_dir,
                     headless=not headed,
@@ -80,15 +83,15 @@ async def run_login(portal_url: str,
             try:
                 browser = await browser_type.launch(**launch_kwargs)
             except Exception as e:
-                log_warn(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
+                logger.warning(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
                 launch_kwargs.pop("channel", None)
                 browser = await browser_type.launch(**launch_kwargs)
             context = await browser.new_context()
             page = await context.new_page()
 
         await page.goto(portal_url, timeout=60_000)
-        log_info("Please complete Okta login and MFA in the browser window.")
-        log_info("After you are back on the portal, press Enter here to save the session...")
+        logger.info("Please complete Okta login and MFA in the browser window.")
+        logger.info("After you are back on the portal, press Enter here to save the session...")
         try:
             input()
         except Exception:
@@ -98,12 +101,12 @@ async def run_login(portal_url: str,
             try:
                 await context.storage_state(path=storage_state)
                 if _is_storage_state_effective(storage_state):
-                    log_info(f"Saved session to {storage_state}")
+                    logger.info(f"Saved session to {storage_state}")
                 else:
-                    log_warn(f"Saved session to {storage_state}, but it appears empty.")
-                    log_warn("Return to the attendance portal before pressing Enter, then try again.")
+                    logger.warning(f"Saved session to {storage_state}, but it appears empty.")
+                    logger.warning("Return to the attendance portal before pressing Enter, then try again.")
             except Exception as e:
-                log_warn(f"Failed to save storage state: {e}")
+                logger.warning(f"Failed to save storage state: {e}")
 
         if browser:
             await browser.close()
@@ -205,11 +208,11 @@ def main():
             storage_state=args.storage_state,
             user_data_dir=args.user_data_dir,
         ))
-        log_info("Session check: " + ("OK" if ok else "NOT logged in"))
+        logger.info("Session check: " + ("OK" if ok else "NOT logged in"))
         raise SystemExit(0 if ok else 1)
 
     if not headed:
-        log_info("Running in headless mode. Use --headed or HEADLESS=0 for a browser window.")
+        logger.info("Running in headless mode. Use --headed or HEADLESS=0 for a browser window.")
 
     asyncio.run(run_login(
         portal_url=args.portal,
@@ -229,7 +232,7 @@ def main():
             storage_state=args.storage_state,
             user_data_dir=args.user_data_dir,
         ))
-        log_info("Session check: " + ("OK" if ok else "NOT logged in"))
+        logger.info("Session check: " + ("OK" if ok else "NOT logged in"))
 
 
 if __name__ == "__main__":
