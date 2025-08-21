@@ -1,152 +1,176 @@
-# Always Attend
+<h1 align="center">Always Attend</h1>
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg">
+  <img src="https://img.shields.io/badge/License-GPLv3-blue.svg">
+  <img src="https://img.shields.io/github/last-commit/bunizao/always-attend">
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey">
+  <p align="center">  
+  <img src="https://img.shields.io/badge/status-Public%20Beta-orange?style=for-the-badge">
+<p align="center">
+  An automation helper to submit weekly attendance codes. Now in Public Beta.<br>
+  ⚠️ <b>Use responsibly and follow your institution’s policies.</b>
+</p>
 
-An automated tool to submit weekly attendance codes for your university, with built-in handling for Okta Multi-Factor Authentication (MFA).
+<p align="center">
+  <a href="README_zh.md"><b>中文文档</b></a>
+</p>
 
-This project is designed for educational and personal use to demonstrate automation capabilities. Please use it responsibly and in accordance with your institution's policies.
+> [!WARNING]  
+> This project is currently in **Public Beta**. Features may change and bugs are expected.     
+> Receive Feedback Here: [![Open Issue](https://img.shields.io/badge/Open-Issue-blue)](https://github.com/bunizao/always-attend/issues/new)
 
-## Features
 
-- **Automated Submission**: Automatically logs in and submits attendance codes.
-- **Okta MFA Support**: Handles Okta MFA using TOTP (Authenticator App) secrets.
-- **Persistent Sessions**: Reuses your login session to minimize MFA prompts and speed up subsequent runs.
-- **Flexible Code Sources**: Load attendance codes from environment variables, local JSON files, or remote URLs.
-- **GitHub Actions Integration**: Includes a workflow to automatically fetch codes from GitHub Issues.
-- **Cross-Platform**: Runs on any system with Python and Playwright support.
 
-## How It Works
 
-The project uses [Playwright](https://playwright.dev/python/) to control a browser and simulate user actions. It consists of two main scripts:
 
-1.  `login.py`: An interactive script to perform the initial login. It opens a browser, allowing you to enter your credentials and MFA code. Upon success, it saves your session state (cookies and local storage) to a `storage_state.json` file.
-2.  `submit.py`: A script that uses the saved session from `storage_state.json` to directly access the attendance portal and submit your codes without needing to log in again.
-3.  `main.py`: The main entry point that intelligently checks if a valid session exists. If not, it runs the login process first, then proceeds to submit the codes.
 
-## Quick Start
 
-#### 1. Prerequisites
+## Prerequisities
 
-- Python 3.8+
-- A university account with Okta MFA enabled.
-- Your TOTP secret key (the Base32 string from your authenticator app).
+- Python 3.11 or later
+- Google Chrome or Microsoft Edge installed on your computer
 
-#### 2. Clone the Repository
+## Install
 
+0) Install Git
+- Download from https://git-scm.com/downloads and follow the installer.
+
+1) Clone and enter the project
 ```bash
-git clone https://github.com/tutu/always-attend.git
+git clone https://github.com/bunizao/always-attend.git
 cd always-attend
 ```
 
-#### 3. Set Up a Virtual Environment
-
+2) Create and activate a virtual environment
+- macOS / Linux:
 ```bash
-python3 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
-# On Windows, use: .venv\Scripts\activate
 ```
-
-#### 4. Install Dependencies
-
-This will install the required Python packages and the Chromium browser for Playwright.
-
+- Windows (PowerShell):
 ```bash
-pip install -r requirements.txt
-playwright install chromium
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
-#### 5. Configure Your Credentials
+3) Install dependencies
+```bash
+pip install -U pip
+pip install -r requirements.txt
+```
 
-Copy the example environment file and fill in your details.
-
+4) Set environment variables
 ```bash
 cp .env.example .env
 ```
+Then edit `.env` and set your values. Quick edit in VS Code:
+```bash
+code .env
+```
 
-Now, open the `.env` file in a text editor and set the following:
-- `USERNAME`: Your institutional email address.
-- `PASSWORD`: Your password.
-- `TOTP_SECRET`: Your Base32 encoded TOTP secret key for MFA.
+Important:
+- For Monash University Malaysia, set `PORTAL_URL=https://attendance.monash.edu.my`
+- Always include the `https://` prefix
+> [!IMPORTANT]
+> This project is **not funded, affiliated with, or endorsed by Monash University**.  
+> It is an independent project and has no official connection with Monash University.
 
-#### 6. Run the Application
+Alternatively, update `PORTAL_URL` inline:
+```bash
+# macOS
+sed -i '' 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
+# Linux
+sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
+```
 
-Execute the main script. The first time you run it, it will trigger the interactive login process.
-
+5) Quick Start
 ```bash
 python main.py
 ```
+What happens when you run this:
+- It Loads config from `.env` and environment (`PORTAL_URL` must be set, plus codes via `CODES_URL`/`CODES_FILE`/`CODES`).
+- If no valid session is found, a browser window opens for a one‑time sign‑in and shows the MFA verification page. Complete MFA and the session is saved to `storage_state.json`.
+- The script navigates to your attendance portal, scans the current week’s entries, and submits your codes.
+- Check the logs in the terminal for results. If something is missing (usually codes), see the issue template: [![Open Issue](https://img.shields.io/badge/Open-Issue-blue)](https://github.com/bunizao/always-attend/issues/new?template=attendance-codes.yml)
+- Optional flags: `--headed` to watch the browser, `--dry-run` to preview only, `--week N` to target a specific week.
 
-Follow the prompts in the terminal. A browser window will open for you to complete the login. After a valid session is saved, subsequent runs will be non-interactive and submit codes directly.
-
-## Configuration
-
-Attendance codes can be provided in several ways, listed by priority:
-
-1.  **Environment Variables (Per-Slot)**: Highest priority. Define variables matching your class slots.
-    ```bash
-    # Example for .env file
-    "Workshop 1"="CODE123"
-    "Applied 2"="CODE456"
-    ```
-
-2.  **Auto-Discovery from URL**: The script can construct a URL to fetch a JSON file.
-    - `COURSE_CODE`: e.g., "FIT1045"
-    - `WEEK_NUMBER`: e.g., "4"
-    - `CODES_BASE_URL`: The base URL where codes are hosted.
-    - The script will fetch from `{CODES_BASE_URL}/data/{COURSE_CODE}/{WEEK_NUMBER}.json`.
-
-3.  **Direct URL (`CODES_URL`)**: A direct URL to a JSON file containing the codes.
-
-4.  **Local File (`CODES_FILE`)**: A path to a local JSON file.
-
-5.  **Inline String (`CODES`)**: A semicolon-separated string of `slot:code` pairs.
-
-**Example JSON Format:**
-```json
-[
-  {"date": "2025-08-18", "slot": "Workshop 1", "code": "JZXBA"},
-  {"date": "2025-08-19", "slot": "Workshop 2", "code": "AJYV7"}
-]
-```
-
-## Usage
-
-While `main.py` is the primary entry point, you can use the individual scripts for specific tasks.
-
-#### `main.py` (Recommended)
-The main script handles both login and submission intelligently.
+1) Update later
 ```bash
-# Run the full process: check session, log in if needed, then submit
-python main.py
-
-# Force the browser to be visible
-python main.py --headed
-
-# Run in dry-run mode to see what codes would be submitted
-python main.py --dry-run
+git pull
 ```
 
-#### `login.py`
-Use this to manually refresh your session state.
-```bash
-# Run interactive login to create/update storage_state.json
-python login.py --headed
+---
 
-# Check if the current session is still valid
-python login.py --check-only
-```
+See the Environment Variables section below for a full list.
 
-#### `submit.py`
-Use this to submit codes when you are sure `storage_state.json` is valid.
-```bash
-# Submit codes using the existing session
-python submit.py
+## Troubleshooting
 
-# See which codes will be submitted without actually submitting them
-python submit.py --dry-run
-```
+- If login keeps asking for MFA: re-run the headed login to refresh `storage_state.json`
+- If the browser fails to launch: make sure Google Chrome or Microsoft Edge is installed, or set `BROWSER_CHANNEL` to `chrome`/`msedge`.
+- On Windows, if activation fails, run PowerShell as Administrator once, then try `.venv\Scripts\Activate.ps1` again.
+- When running, please do NOT use a VPN, as this may cause Okta to refuse the connection.
 
-## GitHub Actions Integration
+## Command-Line Arguments
 
-This repository includes a workflow (`.github/workflows/attendance-from-issues.yml`) that automatically extracts attendance codes from newly created GitHub Issues.
+main.py
 
-- **How it works**: When an issue with the "Attendance Codes" template is created, a workflow runs, parses the issue body, and saves the codes to a JSON file within the repository (e.g., `data/FIT1045/4.json`).
-- **Usage**: You can then configure `CODES_BASE_URL` to point to your repository's raw content URL (`https://raw.githubusercontent.com/<your-username>/<your-repo>/main`) to automatically pull the latest codes. This setup allows you to update codes just by creating a GitHub issue, without touching the environment variables.
+| Argument | Type | Description | Example |
+| --- | --- | --- | --- |
+| `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
+| `--channel` | string | System Chromium channel | `--channel chrome` |
+| `--headed` | flag | Show browser UI (same as `HEADLESS=0`) | `--headed` |
+| `--dry-run` | flag | Print parsed codes without submitting | `--dry-run` |
+| `--week` | int | Submit codes for week number N | `--week 4` |
+| `--login-only` | flag | Only perform login/session refresh and exit | `--login-only` |
+
+login.py
+
+| Argument | Type | Description | Example |
+| --- | --- | --- | --- |
+| `--portal` | string URL | Attendance portal URL (overrides `PORTAL_URL`) | `--portal https://attendance.example.edu/student/Default.aspx` |
+| `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
+| `--channel` | string | System Chromium channel | `--channel chrome-beta` |
+| `--headed` | flag | Show browser UI (recommended for first login) | `--headed` |
+| `--storage-state` | string path | Path to save `storage_state.json` | `--storage-state storage_state.json` |
+| `--user-data-dir` | string path | Use a persistent browser profile directory | `--user-data-dir ~/.always-attend-profile` |
+| `--check` | flag | After saving, verify login by reopening the portal | `--check` |
+| `--check-only` | flag | Only verify current session state; do not open login | `--check-only` |
+
+submit.py
+
+| Argument | Type | Description | Example |
+| --- | --- | --- | --- |
+| `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
+| `--channel` | string | System Chromium channel | `--channel msedge` |
+| `--headed` | flag | Show browser UI | `--headed` |
+| `--dry-run` | flag | Print parsed codes without submitting | `--dry-run` |
+| `--week` | int | Submit codes for week number N | `--week 6` |
+
+## Environment Variables
+
+| Variable | Type | Required | Description | Example |
+| --- | --- | --- | --- | --- |
+| `PORTAL_URL` | string URL | Yes | Attendance portal base URL | `https://attendance.monash.edu.my` |
+| `CODES_URL` | string URL | No | Direct URL to codes JSON | `https://example.com/codes.json` |
+| `CODES_FILE` | string path | No | Local path to codes JSON | `/home/user/codes.json` |
+| `CODES` | string | No | Inline `slot:code;slot:code` pairs | `"Workshop 1:ABCD1;Workshop 2:EFGH2"` |
+| `CODES_BASE_URL` | string URL | No | Base URL for auto-discovery | `https://raw.githubusercontent.com/user/repo/main` |
+| `WEEK_NUMBER` | int | No | Week number for auto-discovery | `4` |
+| `USERNAME` | string | No | Okta username for auto-login | `student@example.edu` |
+| `PASSWORD` | string | No | Okta password for auto-login | `correcthorsebattery` |
+| `TOTP_SECRET` | string (base32) | No | MFA TOTP secret for auto-login | `JBSWY3DPEHPK3PXP` |
+| `BROWSER` | string | No | Engine override (`chromium`/`firefox`/`webkit`) | `chromium` |
+| `BROWSER_CHANNEL` | string | No | System channel (`chrome`/`msedge`/etc.) | `chrome` |
+| `HEADLESS` | flag (0/1 or true/false) | No | Run without UI (0 disables) | `0` |
+
+## Disclaimer
+
+- This project is for educational and personal use only. Use it responsibly and follow your institution’s policies and the website’s terms of use.
+- This project is not affiliated with, endorsed by, or sponsored by any university or service provider. All product names, logos, and brands are property of their respective owners.
+- You are solely responsible for any use of this tool and any consequences that may arise. The authors provide no guarantee that it will work for your specific setup.
+
+## License
+
+- This project is licensed under the GNU General Public License v3.0 (GPL‑3.0). See the full text in the `LICENSE` file.
+- You may copy, modify, and distribute this software under the terms of the GPL‑3.0. It is provided “as is”, without any warranty.

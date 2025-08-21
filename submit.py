@@ -473,7 +473,7 @@ async def run_submit(dry_run: bool = False) -> None:
                 except Exception:
                     return None
 
-            issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/tutu/always-attend/issues/new"
+            issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/bunizao/always-attend/issues/new?template=attendance-codes.yml"
             
             # 确保 units_url 在循环外定义
             units_url = f"{base}/student/Units.aspx"
