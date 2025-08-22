@@ -322,8 +322,7 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
 
 
 async def collect_day_anchors(page: Page, base: str, start_monday: Optional[datetime] = None) -> List[str]:
-    url = f"{base}/student/Units.aspx"
-    await page.goto(url, timeout=60000)
+    # This function no longer navigates. Caller should navigate to Units.aspx first.
     panels = page.locator('[id^="dayPanel_"]')
     anchors: List[str] = []
     try:
@@ -477,6 +476,9 @@ async def run_submit(dry_run: bool = False) -> None:
             
             # 确保 units_url 在循环外定义
             units_url = f"{base}/student/Units.aspx"
+
+            logger.info(f"Navigating to main units page: {units_url}")
+            await page.goto(units_url, timeout=60000)
             
             for course in enrolled_courses:
                 logger.info(f"[STEP] Processing course: {course}")
@@ -531,28 +533,22 @@ async def run_submit(dry_run: bool = False) -> None:
                         logger.debug(f"Sleeping {delay:.2f}s before next day panel...")
                         await asyncio.sleep(delay)
                     
-                    # 导航到特定日期的URL
-                    day_url = f"{base}/student/Units.aspx#{anchor}"
-                    
+                    # Select the day from the dropdown and wait for the panel
                     try:
-                        await page.goto(day_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                        logger.debug(f"Selecting day '{anchor}' from dropdown...")
+                        await page.locator('#daySel').select_option(value=anchor)
+
+                        # The .change() event triggers an animation/panel update.
+                        # We need to wait for the correct panel to be visible.
                         day_panel_selector = f'#dayPanel_{anchor}'
+                        logger.debug(f"Waiting for panel {day_panel_selector} to be visible...")
+                        await page.locator(day_panel_selector).wait_for(state='visible', timeout=15000)
                         
-                        # 等待面板可见
-                        js_function = f""" 
-                        () => {{
-                            const panel = document.querySelector('{day_panel_selector}');
-                            if (!panel) return false;
-                            const style = window.getComputedStyle(panel);
-                            return style.display !== 'none';
-                        }}
-                        """
-                        await page.wait_for_function(js_function, timeout=15000)
                         root = page.locator(day_panel_selector)
                         logger.debug(f"Successfully found day panel for {anchor}")
                     except Exception as e:
-                        logger.debug(f"Day {anchor}: dayPanel not found or not visible quickly; scanning whole page for entries. Error: {e}")
-                        root = page
+                        logger.warning(f"Day {anchor}: could not select day or panel not visible. Skipping. Error: {e}")
+                        continue
 
                     # 详细调试选择器
                     logger.debug(f"Debugging selectors for {course} on {anchor}...")
@@ -661,13 +657,13 @@ async def run_submit(dry_run: bool = False) -> None:
                                 logger.warning(f"Failed {course}: no code was accepted for this entry.")
 
                             # 返回到Units页面
-                            await page.goto(day_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                            await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
                             break
                             
                         except Exception as e:
                             logger.warning(f"An error occurred while processing an entry for {course} on {anchor}: {e}")
                             try:
-                                await page.goto(day_url, timeout=PAGE_NAV_TIMEOUT_MS)
+                                await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
                             except Exception:
                                 logger.error("Failed to recover by navigating back to Units page. Stopping.")
                                 return

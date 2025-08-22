@@ -3,9 +3,53 @@ import json
 import asyncio
 import argparse
 import importlib
+import sys
+import subprocess
 
 from env_utils import load_env
 from logger import logger
+
+def check_for_updates():
+    """Checks for updates and restarts the script if necessary."""
+    # Only check for updates if not in a CI environment
+    if os.getenv('CI') in ('true', '1'):
+        logger.info("CI environment detected, skipping update check.")
+        return
+
+    try:
+        logger.info("Checking for updates...")
+        
+        # Check if .git directory exists
+        if not os.path.isdir('.git'):
+            logger.info("Not a git repository, skipping update check.")
+            return
+
+        # Fetch the latest changes from the remote
+        subprocess.run(["git", "fetch"], check=True, capture_output=True)
+        
+        # Check if the local branch is behind
+        status_result = subprocess.run(["git", "status", "-uno"], check=True, capture_output=True, text=True)
+        
+        if "Your branch is behind" in status_result.stdout:
+            logger.info("New version available. Pulling changes...")
+            
+            # Pull the changes
+            pull_result = subprocess.run(["git", "pull"], check=True, capture_output=True, text=True)
+            logger.info(pull_result.stdout)
+            
+            logger.info("Update complete. Restarting script...")
+            
+            # Restart the script
+            os.execv(sys.executable, ['python'] + sys.argv)
+        else:
+            logger.info("Already up to date.")
+            
+    except FileNotFoundError:
+        logger.warning("git command not found. Skipping update check.")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"An error occurred during update check: {e.stderr}")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during update check: {e}")
 
 def _is_storage_state_effective(path: str) -> bool:
     try:
@@ -70,6 +114,9 @@ async def _run_submit(dry_run: bool) -> None:
 
 if __name__ == "__main__":
     load_env(os.getenv('ENV_FILE', '.env'))
+
+    # Check for updates before doing anything else
+    check_for_updates()
 
     parser = argparse.ArgumentParser(description="Always-attend: auto login + submit with storage_state check")
     parser.add_argument("--browser", choices=["chromium", "firefox", "webkit"], help="Browser engine override")
