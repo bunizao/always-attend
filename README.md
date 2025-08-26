@@ -49,10 +49,15 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 - Windows (PowerShell):
-```bash
+```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
+If script execution is disabled, run:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+Then rerun `.venv\Scripts\Activate.ps1`. If PowerShell still errors, right-click PowerShell, choose "Run as administrator", and run `Activate.ps1` again.
 
 3) Install dependencies
 ```bash
@@ -110,6 +115,12 @@ See the Environment Variables section below for a full list.
 - If the browser fails to launch: make sure Google Chrome or Microsoft Edge is installed, or set `BROWSER_CHANNEL` to `chrome`/`msedge`.
 - On Windows, if activation fails, run PowerShell as Administrator once, then try `.venv\Scripts\Activate.ps1` again.
 - When running, please do NOT use a VPN, as this may cause Okta to refuse the connection.
+
+## FAQ (Windows)
+
+- **Use `py` instead of `python`**: If `python` isn't found or points to another version, use `py` (e.g., `py -m venv .venv`, `py main.py`).
+- **Switching between Git Bash and PowerShell**: In terminals like VS Code, use the dropdown to open a new Git Bash or PowerShell window. Some commands (e.g., `source`) only work in Git Bash, while PowerShell uses `.\` for scripts.
+- **Path escaping issues**: PowerShell uses backslashes (`\`) and may treat them as escape characters. Wrap paths in quotes or use double backslashes like `C:\path\to\file`. Git Bash uses forward slashes (`/`).
 
 ## Command-Line Arguments
 

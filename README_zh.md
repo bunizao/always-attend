@@ -45,10 +45,15 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 - Windows（PowerShell）：
-```bash
+```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
+若提示“已禁止运行脚本”，可执行：
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+然后再次运行 `.venv\Scripts\Activate.ps1`。若 PowerShell 仍报错，可右键以管理员身份运行 PowerShell 后重试 `Activate.ps1`。
 
 3) 安装依赖
 ```bash
@@ -107,6 +112,12 @@ git pull
 - 如果浏览器无法启动：确认已安装 Chrome 或 Edge，或设置 `BROWSER_CHANNEL=chrome/msedge`
 - Windows 若激活脚本失败：以管理员身份打开 PowerShell，再运行 `.venv\Scripts\Activate.ps1`
 - 运行时请勿使用 VPN，这可能导致 Okta 拒绝连接。
+## 常见问题（Windows）
+
+- **`python` 与 `py`**：在部分 Windows 环境中 `python` 命令不可用或指向其它版本，可使用 `py` 代替，如 `py -m venv .venv`、`py main.py`。
+- **切换 Git Bash 与 PowerShell**：在 VS Code 等终端的下拉菜单中可选择 "Git Bash" 或 "PowerShell"；某些命令（如 `source`）仅在 Git Bash 可用，而 PowerShell 使用 `.\` 调用脚本。
+- **路径转义问题**：PowerShell 使用反斜杠（`\`），可能被视为转义字符；请使用引号或双反斜杠，如 `C:\path\to\file`。Git Bash 则使用正斜杠（`/`）。
+
 ## 命令行参数（Command-Line Arguments）
 
 main.py
