@@ -211,6 +211,7 @@ jobs:
                   "Workshop 03", "Applied 02", "Applied 02-P1", "Lab 07".
                   Do NOT include weekday (e.g., Tuesday), dates (e.g., 19 Aug), or times.
                 - code: the attendance code (alphanumeric only, uppercase).
+              - The `codes` list should only be extracted from lines that strictly contain session information and a code. Ignore any lines that appear to be commentary, instructions, or conversational text, even if they contain something that looks like a code.
               - If the body describes a table and says the rightmost column is the code, parse rows accordingly: take the rightmost column as code, and the left-most descriptive column as slot, then normalize slot to the canonical form above.
               - If course or week is missing, set it to null. If no codes found, return [].
               - Return a single, minified JSON object only (no Markdown or explanation).
