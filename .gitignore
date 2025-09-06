@@ -210,6 +210,8 @@ codes_test.json
 
 # Ignoring agent-related files
 AGENTS.md
-
+CLAUDE.md
 # Ignoring tests directory (not recommended)
 /tests/
+.env.backup
+/.cache_cli_test

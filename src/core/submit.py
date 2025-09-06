@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from urllib.parse import urlparse, urlunparse
 import importlib
 import argparse
@@ -10,11 +10,18 @@ import re
 import random
 import time
 
-import pyotp
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
 
-from logger import logger
-from env_utils import load_env
+from utils.logger import logger
+from utils.env_utils import load_env, save_email_to_env
+from utils.session import is_storage_state_effective
+from utils.playwright_helpers import (
+    fill_first_match,
+    click_first_match,
+    maybe_switch_to_code_factor,
+)
+from utils.totp import gen_totp
+from core.stats import StatsManager
 
 def to_base(origin_url: str) -> str:
     pu = urlparse(origin_url)
@@ -48,14 +55,8 @@ def parse_anchor(anchor: str) -> Optional[datetime]:
         return None
 
 def _is_storage_state_effective(path: str) -> bool:
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        cookies = data.get('cookies') or []
-        origins = data.get('origins') or []
-        return bool(cookies or origins)
-    except Exception:
-        return False
+    # Preserve name for existing references
+    return is_storage_state_effective(path)
 
 
 async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
@@ -76,6 +77,310 @@ async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
     except Exception as e:
         logger.warning(f"Could not scrape enrolled courses: {e}")
         return []
+
+
+def group_gmail_codes_by_course(gmail_codes: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Group Gmail-extracted codes by course."""
+    course_groups = {}
+    
+    for code_info in gmail_codes:
+        subject = code_info.get('subject', '')
+        # Extract course code from subject (e.g., FIT1058, BUS2020)
+        course_pattern = r'\b([A-Z]{2,4}\d{4})\b'
+        match = re.search(course_pattern, subject.upper())
+        
+        if match:
+            course = match.group(1)
+            if course not in course_groups:
+                course_groups[course] = []
+            course_groups[course].append(code_info)
+        else:
+            # If no course found in subject, group under 'UNKNOWN'
+            if 'UNKNOWN' not in course_groups:
+                course_groups['UNKNOWN'] = []
+            course_groups['UNKNOWN'].append(code_info)
+    
+    return course_groups
+
+def create_precise_slot_code_mapping(course_code: str, week_number: str, gmail_codes: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Create precise slot-to-code mapping by matching with data files and Gmail codes."""
+    slot_code_map = {}
+    
+    # Load data file if exists
+    try:
+        course = ''.join(ch for ch in course_code.upper() if ch.isalnum())
+        week = ''.join(ch for ch in week_number if ch.isdigit())
+        local_path = os.path.join('data', course, f"{week}.json")
+        
+        if os.path.exists(local_path):
+            with open(local_path, 'r', encoding='utf-8') as f:
+                data_slots = json.load(f)
+            
+            # Create Gmail codes lookup
+            gmail_codes_set = {code_info['code'].upper() for code_info in gmail_codes if code_info.get('code')}
+            
+            # Match data file slots with Gmail codes
+            for slot_info in data_slots:
+                slot = slot_info.get('slot', '')
+                expected_code = slot_info.get('code', '').upper()
+                
+                # Check if this expected code is in our Gmail extraction
+                if expected_code in gmail_codes_set:
+                    slot_code_map[slot] = expected_code
+                    logger.info(f"[PRECISE] Matched {course} - {slot}: {expected_code}")
+            
+            logger.info(f"[PRECISE] Created {len(slot_code_map)} precise mappings for {course} week {week}")
+        else:
+            logger.info(f"[PRECISE] No data file found: {local_path}")
+            
+    except Exception as e:
+        logger.warning(f"[PRECISE] Failed to create precise mapping for {course_code}: {e}")
+    
+    return slot_code_map
+
+async def extract_all_codes_from_gmail_once(page: Page, enrolled_courses: List[str], week_number: Optional[str], target_email: Optional[str], find_latest_week) -> Dict[str, List[Dict[str, Optional[str]]]]:
+    """Extract attendance codes from Gmail once for all courses"""
+    GMAIL_ENABLED = os.getenv("GMAIL_ENABLED", "1") in ("1", "true", "True")
+    
+    if not GMAIL_ENABLED:
+        logger.info("[INFO] Gmail extraction disabled")
+        return {}
+    
+    try:
+        from extractors.gmail_extractor import GmailCodeExtractor
+        logger.info("[STEP] Opening Gmail once to extract codes for all courses...")
+        
+        # Use existing browser context for Gmail extraction
+        storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
+        search_days = int(os.getenv("GMAIL_SEARCH_DAYS", "7"))
+        
+        # Import playwright for separate browser instance
+        from playwright.async_api import async_playwright
+        
+        # Create a separate headed browser instance for Gmail processing
+        async with async_playwright() as p_gmail:
+            browser_type = p_gmail.chromium  # Use chromium for Gmail
+            # Use system browser channel if available
+            launch_kwargs = {"headless": False}
+            channel = os.getenv("BROWSER_CHANNEL")
+            if channel:
+                launch_kwargs["channel"] = channel
+            gmail_browser = await browser_type.launch(**launch_kwargs)  # Force headed mode for Gmail
+            
+            gmail_context = await gmail_browser.new_context(
+                storage_state=storage_state if os.path.exists(storage_state) else None
+            )
+            gmail_page = await gmail_context.new_page()
+            
+            logger.info("[STEP] Using headed mode for Gmail processing...")
+            extractor = GmailCodeExtractor()
+            
+            # Build comprehensive search query for all courses and weeks
+            search_query = build_comprehensive_search_query(enrolled_courses, week_number, find_latest_week, search_days)
+            
+            gmail_codes = await extractor.extract_codes_from_gmail(
+                page=gmail_page,
+                storage_state=storage_state,
+                search_days=search_days,
+                search_query=search_query,
+                week_number=week_number,
+                target_email=target_email
+            )
+            
+            await gmail_browser.close()
+            
+            if gmail_codes:
+                # Group Gmail codes by course
+                course_groups = group_gmail_codes_by_course(gmail_codes)
+                logger.info(f"[OK] Grouped Gmail codes by course: {list(course_groups.keys())}")
+                
+                # Create precise mappings for each course
+                result = {}
+                for course in enrolled_courses:
+                    if course in course_groups:
+                        week_for_course = week_number or find_latest_week(course)
+                        if week_for_course:
+                            precise_mapping = create_precise_slot_code_mapping(course, week_for_course, course_groups[course])
+                            if precise_mapping:
+                                # Create formatted codes with precise slot mapping
+                                formatted_codes = []
+                                for slot, code in precise_mapping.items():
+                                    formatted_codes.append({
+                                        'slot': slot,
+                                        'code': code,
+                                        'date': None,
+                                        'source': 'gmail_precise',
+                                        'course': course
+                                    })
+                                
+                                # Add remaining codes as fallback
+                                precise_codes = set(precise_mapping.values())
+                                for code_info in course_groups[course]:
+                                    if code_info['code'].upper() not in precise_codes:
+                                        formatted_codes.append({
+                                            'slot': None,
+                                            'code': code_info['code'],
+                                            'date': None,
+                                            'source': 'gmail_fallback',
+                                            'course': course
+                                        })
+                                
+                                result[course] = formatted_codes
+                                logger.info(f"[PRECISE] Created {len(precise_mapping)} precise mappings + {len(formatted_codes) - len(precise_mapping)} fallback codes for {course}")
+                            else:
+                                # Fallback to original format
+                                formatted_codes = []
+                                for code_info in course_groups[course]:
+                                    formatted_codes.append({
+                                        'slot': None,
+                                        'code': code_info['code'],
+                                        'date': None,
+                                        'source': 'gmail',
+                                        'course': course
+                                    })
+                                result[course] = formatted_codes
+                                logger.info(f"[FALLBACK] Using {len(formatted_codes)} general codes for {course}")
+                
+                logger.info(f"[OK] Extracted codes for {len(result)} courses from Gmail in one session")
+                return result
+            else:
+                logger.info("[INFO] No codes found in Gmail")
+                return {}
+                
+    except Exception as e:
+        logger.warning(f"Gmail code extraction failed: {e}")
+        return {}
+
+
+def build_comprehensive_search_query(enrolled_courses: List[str], week_number: Optional[str], find_latest_week, search_days: int) -> str:
+    """Build a simple Gmail search to avoid misses.
+
+    Uses minimal attendance keywords + optional week number + domain hint and a date window.
+    """
+    from datetime import datetime, timedelta
+
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=search_days)
+    start_str = start_date.strftime("%Y/%m/%d")
+    end_str = end_date.strftime("%Y/%m/%d")
+
+    # Use minimal search terms - Gmail has fuzzy search
+    # User specifically requested "attendance codes" (plural)
+    parts = ["attendance codes", "@monash.edu"]
+    if week_number:
+        parts.append(f"week {week_number}")
+
+    base_query = " ".join(parts)
+    date_query = f"after:{start_str} before:{end_str}"
+    return f"{base_query} {date_query}"
+
+
+async def parse_codes_with_gmail(page: Page = None, course_code: Optional[str] = None, week_number: Optional[str] = None, target_email: Optional[str] = None) -> List[Dict[str, Optional[str]]]:
+    """Enhanced parse_codes function that supports Gmail extraction"""
+    GMAIL_ENABLED = os.getenv("GMAIL_ENABLED", "1") in ("1", "true", "True")
+    
+    # Try Gmail extraction first if enabled and page is available
+    if GMAIL_ENABLED and page:
+        try:
+            from extractors.gmail_extractor import GmailCodeExtractor
+            logger.info("[STEP] Attempting to extract codes from Gmail...")
+            
+            # Use existing browser context for Gmail extraction
+            storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
+            search_days = int(os.getenv("GMAIL_SEARCH_DAYS", "7"))
+            
+            # Import playwright for separate browser instance
+            from playwright.async_api import async_playwright
+            
+            # Create a separate headed browser instance for Gmail processing
+            # This ensures Gmail interaction is visible while keeping attendance submission headless
+            async with async_playwright() as p_gmail:
+                browser_type = p_gmail.chromium  # Use chromium for Gmail
+                # Use system browser channel if available
+                launch_kwargs = {"headless": False}
+                channel = os.getenv("BROWSER_CHANNEL")
+                if channel:
+                    launch_kwargs["channel"] = channel
+                gmail_browser = await browser_type.launch(**launch_kwargs)  # Force headed mode for Gmail
+                
+                gmail_context = await gmail_browser.new_context(
+                    storage_state=storage_state if os.path.exists(storage_state) else None
+                )
+                gmail_page = await gmail_context.new_page()
+                
+                logger.info("[STEP] Using headed mode for Gmail processing...")
+                extractor = GmailCodeExtractor()
+                gmail_codes = await extractor.extract_codes_from_gmail(
+                    page=gmail_page,
+                    storage_state=storage_state,
+                    search_days=search_days,
+                    week_number=week_number,
+                    target_email=target_email
+                )
+                
+                if gmail_codes:
+                    # Group Gmail codes by course for better organization
+                    course_groups = group_gmail_codes_by_course(gmail_codes)
+                    logger.info(f"[OK] Grouped Gmail codes by course: {list(course_groups.keys())}")
+                    
+                    # If we have a specific course, try to get precise mapping
+                    if course_code and week_number and course_code in course_groups:
+                        precise_mapping = create_precise_slot_code_mapping(course_code, week_number, course_groups[course_code])
+                        if precise_mapping:
+                            # Create formatted codes with precise slot mapping
+                            formatted_codes = []
+                            for slot, code in precise_mapping.items():
+                                formatted_codes.append({
+                                    'slot': slot,
+                                    'code': code,
+                                    'date': None,
+                                    'source': 'gmail_precise',
+                                    'course': course_code
+                                })
+                            
+                            # Add remaining codes as fallback
+                            precise_codes = set(precise_mapping.values())
+                            for code_info in course_groups[course_code]:
+                                if code_info['code'].upper() not in precise_codes:
+                                    formatted_codes.append({
+                                        'slot': None,
+                                        'code': code_info['code'],
+                                        'date': None,
+                                        'source': 'gmail_fallback',
+                                        'course': course_code
+                                    })
+                            
+                            logger.info(f"[PRECISE] Using {len(precise_mapping)} precise mappings + {len(formatted_codes) - len(precise_mapping)} fallback codes for {course_code}")
+                            return formatted_codes
+                    
+                    # Fallback to original format for all codes
+                    formatted_codes = extractor.format_codes_for_submit(gmail_codes)
+                    logger.info(f"[OK] Extracted {len(formatted_codes)} codes from Gmail")
+                    
+                    # If we found codes from Gmail, return them
+                    if formatted_codes:
+                        # Deduplicate codes before returning
+                        unique_codes = []
+                        seen_codes = set()
+                        for code_info in formatted_codes:
+                            code_key = code_info['code']
+                            if code_key not in seen_codes:
+                                seen_codes.add(code_key)
+                                unique_codes.append(code_info)
+                        
+                        if len(formatted_codes) > len(unique_codes):
+                            logger.info(f"[INFO] Deduplicated {len(formatted_codes) - len(unique_codes)} duplicate codes from Gmail")
+                        
+                        return unique_codes
+                else:
+                    logger.info("[INFO] No codes found in Gmail")
+                
+        except Exception as e:
+            logger.warning(f"Gmail code extraction failed: {e}")
+            # Continue with other code sources
+    
+    # Fall back to original parse_codes logic
+    return parse_codes(course_code=course_code, week_number=week_number)
 
 
 def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = None) -> List[Dict[str, Optional[str]]]:
@@ -180,46 +485,8 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
     return result
 
 
-async def fill_first_match(page: Page, selectors: List[str], value: str) -> bool:
-    for sel in selectors:
-        try:
-            el = page.locator(sel).first
-            if await el.is_visible(timeout=3000):
-                await el.fill(value)
-                return True
-        except Exception:
-            continue
-    return False
-
-
-async def click_first_match(page: Page, selectors: List[str]) -> bool:
-    for sel in selectors:
-        try:
-            el = page.locator(sel).first
-            if await el.is_visible(timeout=3000):
-                await el.click()
-                return True
-        except Exception:
-            continue
-    return False
-
-
-async def maybe_switch_to_code_factor(page: Page) -> None:
-    candidates = [
-        'text=/enter code/i',
-        'text=/use code/i',
-        'text=/use a code/i',
-        'text=/Use verification code/i',
-        'text=/Verify with something else/i',
-        'text=/Enter a code/i',
-        'text=/Google Authenticator|Authenticator app/i',
-        'text=/Okta Verify/i',
-    ]
-    await click_first_match(page, candidates)
-
-
-def gen_totp(secret: str) -> str:
-    return pyotp.TOTP(secret).now()
+# fill_first_match, click_first_match, maybe_switch_to_code_factor and gen_totp
+# are imported from utils for reuse across modules
 
 
 async def login(page: Page) -> None:
@@ -298,6 +565,69 @@ async def is_authenticated(page: Page) -> bool:
         return False
 
 
+async def submit_codes_intelligently(page: Page, entries: List[Dict[str, Optional[str]]], entry_element, course: str) -> Tuple[bool, str]:
+    """Submit codes intelligently: precise matches first, then fallback polling."""
+    
+    # Separate precise matches from fallbacks
+    precise_codes = [item for item in entries if item.get('source') == 'gmail_precise']
+    fallback_codes = [item for item in entries if item.get('source') in ('gmail_fallback', 'gmail', None)]
+    
+    logger.debug(f"[INTELLIGENT] {course}: {len(precise_codes)} precise codes, {len(fallback_codes)} fallback codes")
+    
+    # Phase 1: Try precise slot-code matches first
+    if precise_codes:
+        # Get the slot information from the current entry
+        try:
+            entry_text = (await entry_element.inner_text()).strip()
+            logger.debug(f"[INTELLIGENT] Entry text: {entry_text}")
+            
+            # Try to match the entry text with our precise slot mappings
+            for code_info in precise_codes:
+                slot = code_info.get('slot', '')
+                if slot and slot.lower() in entry_text.lower():
+                    code_val = code_info.get('code')
+                    if code_val:
+                        logger.info(f"[PRECISE MATCH] {course} - Trying exact slot match '{slot}': {code_val}")
+                        ok, msg = await submit_code_on_entry(page, code_val)
+                        if ok:
+                            logger.info(f"[PRECISE SUCCESS] {course} - {slot}: {code_val}")
+                            return True, f"precise match: {slot}"
+                        else:
+                            logger.warning(f"[PRECISE FAILED] {course} - {slot}: {msg}")
+            
+            # If no exact slot match, try all precise codes (they're likely for this session)
+            for code_info in precise_codes:
+                code_val = code_info.get('code')
+                if code_val:
+                    slot = code_info.get('slot', 'unknown')
+                    logger.info(f"[PRECISE TRY] {course} - Trying precise code '{slot}': {code_val}")
+                    ok, msg = await submit_code_on_entry(page, code_val)
+                    if ok:
+                        logger.info(f"[PRECISE SUCCESS] {course} - {slot}: {code_val}")
+                        return True, f"precise code: {slot}"
+                    else:
+                        logger.debug(f"[PRECISE FAILED] {course} - {slot}: {msg}")
+        
+        except Exception as e:
+            logger.debug(f"[PRECISE ERROR] {course}: {e}")
+    
+    # Phase 2: Fallback to polling remaining codes
+    if fallback_codes:
+        logger.info(f"[FALLBACK] {course} - Trying {len(fallback_codes)} fallback codes...")
+        for code_info in fallback_codes:
+            code_val = code_info.get('code')
+            if code_val:
+                logger.debug(f"[FALLBACK] {course} - Trying: {code_val}")
+                ok, msg = await submit_code_on_entry(page, code_val)
+                if ok:
+                    logger.info(f"[FALLBACK SUCCESS] {course}: {code_val}")
+                    return True, f"fallback polling: {code_val}"
+                else:
+                    logger.debug(f"[FALLBACK FAILED] {course}: {msg}")
+    
+    return False, "no valid codes found"
+
+
 async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
     logger.debug(f"Submitting code: {code}")
     filled = await fill_first_match(page, [
@@ -345,7 +675,7 @@ async def collect_day_anchors(page: Page, base: str, start_monday: Optional[date
     return [a for _, a in dated] or anchors
 
 
-async def run_submit(dry_run: bool = False) -> None:
+async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> None:
     PORTAL_URL = os.getenv("PORTAL_URL")
     BROWSER = os.getenv("BROWSER", "chromium").lower()
     BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "chrome")
@@ -357,7 +687,7 @@ async def run_submit(dry_run: bool = False) -> None:
     if not USER_DATA_DIR and os.path.exists(STORAGE_STATE) and not _is_storage_state_effective(STORAGE_STATE):
         logger.warning(f"Detected empty storage state at {STORAGE_STATE}; opening interactive login...")
         try:
-            login_mod = importlib.import_module('login')
+            login_mod = importlib.import_module('core.login')
             await login_mod.run_login(
                 portal_url=PORTAL_URL,
                 browser_name=os.getenv('BROWSER', 'chromium'),
@@ -472,33 +802,66 @@ async def run_submit(dry_run: bool = False) -> None:
                 except Exception:
                     return None
 
-            issues_url = os.getenv("ISSUES_NEW_URL") or "https://github.com/bunizao/always-attend/issues/new?template=attendance-codes.yml"
-            
             # 确保 units_url 在循环外定义
             units_url = f"{base}/student/Units.aspx"
 
             logger.info(f"Navigating to main units page: {units_url}")
             await page.goto(units_url, timeout=60000)
             
+            # Phase 1: Extract all attendance codes from Gmail in one session
+            logger.info(f"[PHASE 1] Extracting attendance codes from Gmail for all courses...")
+            all_course_codes = {}  # {course: [codes]}
+            
+            # Extract all codes from Gmail once
+            all_gmail_codes = await extract_all_codes_from_gmail_once(page=page, enrolled_courses=enrolled_courses, week_number=WEEK_NUMBER, target_email=target_email, find_latest_week=find_latest_week)
+            
+            # Distribute codes to courses and try fallback methods for missing codes
             for course in enrolled_courses:
-                logger.info(f"[STEP] Processing course: {course}")
+                logger.info(f"[STEP] Processing codes for course: {course}")
                 week_for_course = WEEK_NUMBER or find_latest_week(course)
                 if not week_for_course:
                     logger.warning(f"No week detected for {course}. Add data/{course}/<week>.json or set WEEK_NUMBER.")
                     continue
 
-                entries = parse_codes(course_code=course, week_number=week_for_course)
-                codes = list({(item.get('code') or '').strip() for item in entries if (item.get('code') or '').strip()})
-                if not codes:
+                # Get Gmail codes for this course
+                course_codes = all_gmail_codes.get(course, [])
+                
+                # If no Gmail codes found, try fallback methods (local files, etc.)
+                if not course_codes:
+                    logger.info(f"[FALLBACK] No Gmail codes for {course}, trying fallback methods...")
+                    course_codes = parse_codes(course_code=course, week_number=week_for_course)
+                
+                if not course_codes:
                     logger.warning(f"No attendance codes found for {course} week {week_for_course}.")
-                    logger.info(f"You can add missing codes by creating an issue at: {issues_url}")
+                    continue
+                
+                all_course_codes[course] = course_codes
+                logger.info(f"[OK] Found {len(course_codes)} codes for {course}")
+            
+            if not all_course_codes:
+                logger.error("No attendance codes found for any course. Nothing to submit.")
+                return
+            
+            logger.info(f"[PHASE 1 COMPLETE] Found codes for {len(all_course_codes)} courses")
+            
+            # Phase 2: Submit all collected codes
+            logger.info(f"[PHASE 2] Submitting attendance codes...")
+            
+            for course, entries in all_course_codes.items():
+                logger.info(f"[STEP] Processing course: {course}")
+                week_for_course = WEEK_NUMBER or find_latest_week(course)
+                
+                if not entries:
+                    logger.warning(f"No attendance codes found for {course} week {week_for_course}.")
                     continue
 
-                logger.info(f"[OK] Loaded {len(codes)} codes for {course} (week {week_for_course})")
+                logger.info(f"[OK] Loaded {len(entries)} codes for {course} (week {week_for_course})")
 
                 if dry_run:
-                    for code in codes:
-                        print(" -", {'course': course, 'week': week_for_course, 'code': code})
+                    for item in entries:
+                        code = (item.get('code') or '').strip()
+                        if code:
+                            print(" -", {'course': course, 'week': week_for_course, 'code': code})
                     continue
 
                 monday_dt: Optional[datetime] = None
@@ -647,14 +1010,14 @@ async def run_submit(dry_run: bool = False) -> None:
 
                             logger.info(f"[STEP] Processing {course} - {text}...")
                             submitted = False
-                            for code_val in codes:
-                                ok, msg = await submit_code_on_entry(page, code_val)
-                                if ok:
-                                    logger.info(f"[OK] Submitted {course}: {msg}")
-                                    submitted = True
-                                    break
-                            if not submitted:
-                                logger.warning(f"Failed {course}: no code was accepted for this entry.")
+                            
+                            # Use intelligent code submission
+                            ok, msg = await submit_codes_intelligently(page, entries, entry, course)
+                            if ok:
+                                logger.info(f"[OK] Submitted {course}: {msg}")
+                                submitted = True
+                            else:
+                                logger.warning(f"Failed {course}: {msg}")
 
                             # 返回到Units页面
                             await page.goto(units_url, timeout=PAGE_NAV_TIMEOUT_MS)
@@ -678,6 +1041,15 @@ async def run_submit(dry_run: bool = False) -> None:
                 await context.close()
 
 
+def _save_email_to_env(email: str) -> None:
+    """Save email to .env file for future use (delegates to utils)."""
+    try:
+        save_email_to_env(email)
+        print(f"💾 Email saved to {os.getenv('ENV_FILE', '.env')} for future use")
+    except Exception as e:
+        logger.warning(f"Failed to save email to .env file: {e}")
+
+
 def main():
     load_env(os.getenv('ENV_FILE', '.env'))
 
@@ -686,6 +1058,7 @@ def main():
     ap.add_argument("--channel", help="Use system browser channel (chromium only): chrome|chrome-beta|msedge|msedge-beta")
     ap.add_argument("--headed", action="store_true", help="Run with browser UI (sets HEADLESS=0)")
     ap.add_argument("--dry-run", action="store_true", help="Print parsed codes and exit (no browser)")
+    ap.add_argument("--email", help="School email address for Gmail login")
     ap.add_argument("--week", help="Week number to submit (sets WEEK_NUMBER)")
     args = ap.parse_args()
 
@@ -698,7 +1071,38 @@ def main():
     if args.week:
         os.environ['WEEK_NUMBER'] = str(args.week)
     
-    asyncio.run(run_submit(dry_run=bool(args.dry_run or os.getenv('DRY_RUN') in ('1','true','True'))))
+    # Handle email input
+    target_email = args.email
+    if not target_email:
+        # Reload env to get any newly saved SCHOOL_EMAIL
+        load_env(os.getenv('ENV_FILE', '.env'))
+        target_email = os.getenv("SCHOOL_EMAIL")  # Check if email is already saved
+    
+    if not target_email and os.getenv("GMAIL_ENABLED", "1") in ("1", "true", "True"):
+        try:
+            target_email = input("Enter your school email address (preferably ending with .edu): ").strip()
+            if target_email:
+                # Validate email format
+                if '@' not in target_email:
+                    print("❌ Invalid email format")
+                    target_email = None
+                elif not target_email.endswith('.edu'):
+                    print("⚠️  Warning: Email doesn't end with .edu, but will proceed")
+                    print(f"✅ Using email: {target_email}")
+                    # Save to .env file for future use
+                    _save_email_to_env(target_email)
+                else:
+                    print(f"✅ Using email: {target_email}")
+                    # Save to .env file for future use
+                    _save_email_to_env(target_email)
+        except KeyboardInterrupt:
+            print("\nUser cancelled")
+            target_email = None
+        except Exception as e:
+            logger.warning(f"Email input error: {e}")
+            target_email = None
+    
+    asyncio.run(run_submit(dry_run=bool(args.dry_run or os.getenv('DRY_RUN') in ('1','true','True')), target_email=target_email))
 
 
 if __name__ == '__main__':

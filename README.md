@@ -26,9 +26,9 @@
 
 
 
-## Prerequisities
+## Prerequisites
 
-- Python 3.11 or later
+- Python 3.8 or later (3.11+ recommended)
 - Google Chrome or Microsoft Edge installed on your computer
 
 ## Install
@@ -65,21 +65,22 @@ pip install -U pip
 pip install -r requirements.txt
 ```
 
-4) Set environment variables
+4) Set environment variables (Optional - First-time setup wizard will handle this)
 ```bash
 cp .env.example .env
 ```
-Then edit `.env` and set your values. Quick edit in VS Code:
+Then edit `.env` and set your values, or use the launcher's first-time setup wizard. Quick edit in VS Code:
 ```bash
 code .env
 ```
 
 Important:
-- For Monash University Malaysia, set `PORTAL_URL=https://attendance.monash.edu.my`
-- Always include the `https://` prefix
+- The first-time setup wizard in the launchers will automatically configure most settings
+- For Monash University Malaysia, the wizard provides a quick setup option
+- Always include the `https://` prefix in URLs
 > [!IMPORTANT]
-> This project is **not funded, affiliated with, or endorsed by Monash University**.  
-> It is an independent project and has no official connection with Monash University.
+> This project is **not funded, affiliated with, or endorsed by any educational institution**.  
+> It is an independent project and has no official connection with any university.
 
 Alternatively, update `PORTAL_URL` inline:
 ```bash
@@ -89,18 +90,26 @@ sed -i '' 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
 sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
 ```
 
-5) Quick Start
+5) Quick Start - Use the Enhanced Launchers (Recommended)
 ```bash
+# macOS: Double-click Always-Attend.command
+# Windows: Double-click Always-Attend.bat
+
+# Or run directly:
 python main.py
 ```
 What happens when you run this:
-- It Loads config from `.env` and environment (`PORTAL_URL` must be set, plus codes via `CODES_URL`/`CODES_FILE`/`CODES`).
-- If no valid session is found, a browser window opens for a one‑time sign‑in and shows the MFA verification page. Complete MFA and the session is saved to `storage_state.json`.
-- The script navigates to your attendance portal, scans the current week’s entries, and submits your codes.
-- Check the logs in the terminal for results. If something is missing (usually codes), see the issue template: [![Open Issue](https://img.shields.io/badge/Open-Issue-blue)](https://github.com/bunizao/always-attend/issues/new?template=attendance-codes.yml)
-- Optional flags: `--headed` to watch the browser, `--dry-run` to preview only, `--week N` to target a specific week.
+- **First-time setup wizard** guides you through configuration if needed
+- **Privacy policy display** ensures compliance awareness
+- **Auto-configuration** for supported universities (Monash Malaysia option available)
+- **Gmail integration** automatically extracts codes from your institutional email
+- **Intelligent submission** with precise slot matching and optimized polling
+- If no valid session is found, a browser window opens for one‑time sign‑in and MFA verification
+- The script navigates to your attendance portal and submits your codes efficiently
+- Check the logs in the terminal for results
+- Optional flags: `--headed` to watch the browser, `--dry-run` to preview only, `--week N` to target a specific week
 
-1) Update later
+6) Update later
 ```bash
 git pull
 ```
@@ -108,6 +117,76 @@ git pull
 ---
 
 See the Environment Variables section below for a full list.
+
+## 🚀 Easy Launch (New!)
+
+For easier usage, you can now double-click to run with our enhanced first-time setup:
+
+**macOS:**
+- Double-click `Always-Attend.command` for the interactive launcher with first-time setup wizard
+
+**Windows:**
+- Double-click `Always-Attend.bat` for the enhanced launcher with setup wizard
+
+### First-Time Setup Features:
+- **Cool ASCII art banner** for enhanced visual experience
+- **Privacy policy display** with consent mechanism (required on first run)
+- **University configuration** with quick Monash Malaysia setup option
+- **Email and password input** during initial setup
+- **Week number configuration** for attendance tracking
+- **OCR method selection** with three options:
+  - Local OCR (no external services, requires dependencies)
+  - AI-powered OCR (Gemini/ChatGPT integration with API key input)
+  - Manual extraction (no automatic processing)
+- **Simplified execution**: Just runs `python main.py` directly, letting the program auto-determine needed actions
+- **No complex menus**: Streamlined user experience focused on core functionality
+
+## 📧 Gmail Integration (New!)
+
+The tool can now automatically extract attendance codes from your institutional Gmail account using the same Okta authentication session:
+
+```bash
+# Enable Gmail integration in your .env file (now enabled by default)
+GMAIL_ENABLED=1
+GMAIL_SEARCH_DAYS=7  # Search last 7 days of emails
+
+# Run normally - Gmail will be checked first for codes automatically
+python main.py
+```
+
+Features:
+- **Default enabled**: Gmail integration is now the primary method for code extraction
+- Uses existing Okta session cookies to access institutional Gmail  
+- Searches for attendance-related emails automatically
+- **Intelligent code extraction** with course grouping and precise slot matching
+- **Two-phase submission**: Precise matching first, fallback polling second (eliminates "ridiculous" polling of all codes)
+- Identifies course slots and dates from email content
+- **Optimized performance**: Groups codes by course and uses smart matching algorithms
+- Falls back to other code sources if no Gmail codes found
+
+The Gmail integration looks for patterns like:
+- "attendance code: ABC123"
+- "your code: DEF456" 
+- Workshop/tutorial/lab session information
+- Date and slot number extraction
+
+## 📊 Statistics Tracking
+
+The tool now automatically tracks your attendance submission statistics:
+
+```bash
+# View detailed statistics
+python main.py --stats
+
+# Or use the stats module directly
+python stats.py
+```
+
+Statistics include:
+- Total runs and success rate
+- Codes submitted per course
+- Recent activity timeline
+- Error history
 
 ## Troubleshooting
 
@@ -134,6 +213,7 @@ main.py
 | `--dry-run` | flag | Print parsed codes without submitting | `--dry-run` |
 | `--week` | int | Submit codes for week number N | `--week 4` |
 | `--login-only` | flag | Only perform login/session refresh and exit | `--login-only` |
+| `--stats` | flag | Show attendance statistics and exit | `--stats` |
 
 login.py
 
@@ -163,6 +243,8 @@ submit.py
 | Variable | Type | Required | Description | Example |
 | --- | --- | --- | --- | --- |
 | `PORTAL_URL` | string URL | Yes | Attendance portal base URL | `https://attendance.monash.edu.my` |
+| `GMAIL_ENABLED` | flag (0/1 or true/false) | No | Enable Gmail code extraction | `1` |
+| `GMAIL_SEARCH_DAYS` | int | No | Days back to search Gmail | `7` |
 | `CODES_URL` | string URL | No | Direct URL to codes JSON | `https://example.com/codes.json` |
 | `CODES_FILE` | string path | No | Local path to codes JSON | `/home/user/codes.json` |
 | `CODES` | string | No | Inline `slot:code;slot:code` pairs | `"Workshop 1:ABCD1;Workshop 2:EFGH2"` |
