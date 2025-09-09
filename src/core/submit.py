@@ -84,13 +84,18 @@ def group_gmail_codes_by_course(gmail_codes: List[Dict[str, Any]]) -> Dict[str, 
     course_groups = {}
     
     for code_info in gmail_codes:
-        subject = code_info.get('subject', '')
-        # Extract course code from subject (e.g., FIT1058, BUS2020)
-        course_pattern = r'\b([A-Z]{2,4}\d{4})\b'
-        match = re.search(course_pattern, subject.upper())
+        # Prefer explicit course field if extractor provided it
+        course_field = (code_info.get('course') or '').strip().upper()
+        if course_field:
+            course = course_field
+        else:
+            subject = code_info.get('subject', '')
+            # Extract course code from subject (e.g., FIT1058)
+            course_pattern = r'\b([A-Z]{3}\d{4})\b'
+            match = re.search(course_pattern, subject.upper())
+            course = match.group(1) if match else None
         
-        if match:
-            course = match.group(1)
+        if course:
             if course not in course_groups:
                 course_groups[course] = []
             course_groups[course].append(code_info)
@@ -157,22 +162,22 @@ async def extract_all_codes_from_gmail_once(page: Page, enrolled_courses: List[s
         # Import playwright for separate browser instance
         from playwright.async_api import async_playwright
         
-        # Create a separate headed browser instance for Gmail processing
+        # Create a separate headless browser instance for Gmail processing
         async with async_playwright() as p_gmail:
             browser_type = p_gmail.chromium  # Use chromium for Gmail
             # Use system browser channel if available
-            launch_kwargs = {"headless": False}
+            launch_kwargs = {"headless": True}
             channel = os.getenv("BROWSER_CHANNEL")
             if channel:
                 launch_kwargs["channel"] = channel
-            gmail_browser = await browser_type.launch(**launch_kwargs)  # Force headed mode for Gmail
+            gmail_browser = await browser_type.launch(**launch_kwargs)  # Headless mode for Gmail
             
             gmail_context = await gmail_browser.new_context(
                 storage_state=storage_state if os.path.exists(storage_state) else None
             )
             gmail_page = await gmail_context.new_page()
             
-            logger.info("[STEP] Using headed mode for Gmail processing...")
+            logger.info("[STEP] Using headless mode for Gmail processing...")
             extractor = GmailCodeExtractor()
             
             # Build comprehensive search query for all courses and weeks
@@ -221,7 +226,7 @@ async def extract_all_codes_from_gmail_once(page: Page, enrolled_courses: List[s
                                             'slot': None,
                                             'code': code_info['code'],
                                             'date': None,
-                                            'source': 'gmail_fallback',
+                                            'source': code_info.get('source', 'gmail_fallback'),
                                             'course': course
                                         })
                                 
@@ -235,11 +240,76 @@ async def extract_all_codes_from_gmail_once(page: Page, enrolled_courses: List[s
                                         'slot': None,
                                         'code': code_info['code'],
                                         'date': None,
-                                        'source': 'gmail',
+                                        'source': code_info.get('source', 'gmail'),
                                         'course': course
                                     })
                                 result[course] = formatted_codes
                                 logger.info(f"[FALLBACK] Using {len(formatted_codes)} general codes for {course}")
+
+                # Assign UNKNOWN codes to likely courses via local data matching
+                if 'UNKNOWN' in course_groups:
+                    unknown_items = course_groups['UNKNOWN']
+
+                    def load_expected_codes(course: str, week: str) -> set:
+                        try:
+                            local_path = os.path.join('data', ''.join(ch for ch in course if ch.isalnum()), f"{week}.json")
+                            if os.path.exists(local_path):
+                                with open(local_path, 'r', encoding='utf-8') as f:
+                                    data = json.load(f)
+                                return {str(it.get('code','')).strip().upper() for it in data if isinstance(it, dict)}
+                        except Exception:
+                            pass
+                        return set()
+
+                    for course in enrolled_courses:
+                        # Skip if already have codes collected
+                        if course in result:
+                            continue
+                        week_for_course = week_number or find_latest_week(course)
+                        if not week_for_course:
+                            continue
+                        expected = load_expected_codes(course, week_for_course)
+                        if not expected:
+                            continue
+                        # Filter unknown codes that match expected set
+                        matched = [ci for ci in unknown_items if (ci.get('code') or '').strip().upper() in expected]
+                        if not matched:
+                            continue
+                        # Build precise mapping using matched subset
+                        precise_mapping = create_precise_slot_code_mapping(course, week_for_course, matched)
+                        formatted_codes = []
+                        if precise_mapping:
+                            for slot, code in precise_mapping.items():
+                                formatted_codes.append({
+                                    'slot': slot,
+                                    'code': code,
+                                    'date': None,
+                                    'source': 'gmail_precise',
+                                    'course': course
+                                })
+                            # add any remaining matched as fallback
+                            precise_codes = set(precise_mapping.values())
+                            for code_info in matched:
+                                if code_info['code'].upper() not in precise_codes:
+                                    formatted_codes.append({
+                                        'slot': None,
+                                        'code': code_info['code'],
+                                        'date': None,
+                                        'source': code_info.get('source', 'gmail_fallback'),
+                                        'course': course
+                                    })
+                        else:
+                            for code_info in matched:
+                                formatted_codes.append({
+                                    'slot': None,
+                                    'code': code_info['code'],
+                                    'date': None,
+                                    'source': code_info.get('source', 'gmail'),
+                                    'course': course
+                                })
+                        if formatted_codes:
+                            result[course] = formatted_codes
+                            logger.info(f"[ASSIGN] Mapped {len(formatted_codes)} unknown Gmail codes to {course} via local data")
                 
                 logger.info(f"[OK] Extracted codes for {len(result)} courses from Gmail in one session")
                 return result
@@ -279,7 +349,65 @@ async def parse_codes_with_gmail(page: Page = None, course_code: Optional[str] =
     """Enhanced parse_codes function that supports Gmail extraction"""
     GMAIL_ENABLED = os.getenv("GMAIL_ENABLED", "1") in ("1", "true", "True")
     
-    # Try Gmail extraction first if enabled and page is available
+    # Check Gmail cache first if enabled (regardless of page availability)
+    if GMAIL_ENABLED:
+        try:
+            from utils.gmail_cache import GmailCache
+            from extractors.gmail_extractor import GmailCodeExtractor
+            
+            # Try to load from cache first
+            cache = GmailCache()
+            
+            # Build search query to match cache key
+            search_days = int(os.getenv("GMAIL_SEARCH_DAYS", "7"))
+            from datetime import datetime, timedelta
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=search_days)
+            start_str = start_date.strftime("%Y/%m/%d")
+            end_str = end_date.strftime("%Y/%m/%d")
+            
+            parts = ["attendance codes", "@monash.edu"]
+            if week_number:
+                parts.append(f"week {week_number}")
+            base_query = " ".join(parts)
+            date_query = f"after:{start_str} before:{end_str}"
+            search_query = f"{base_query} {date_query}"
+            
+            cache_key = cache.make_key(search_query=search_query, target_email=target_email)
+            cached_result = cache.get(cache_key)
+            
+            if cached_result is not None:
+                gmail_codes = cached_result.get('codes', [])
+                if gmail_codes:
+                    logger.info(f"[CACHE] Found {len(gmail_codes)} cached Gmail codes")
+                    
+                    # Format for submission (convert to expected format)
+                    extractor = GmailCodeExtractor()
+                    formatted_codes = extractor.format_codes_for_submit(gmail_codes)
+                    logger.info(f"[CACHE] Formatted {len(formatted_codes)} codes for submission")
+                    
+                    # Deduplicate codes
+                    unique_codes = []
+                    seen_codes = set()
+                    for code_info in formatted_codes:
+                        code_key = code_info['code']
+                        if code_key not in seen_codes:
+                            seen_codes.add(code_key)
+                            unique_codes.append(code_info)
+                    
+                    if len(formatted_codes) > len(unique_codes):
+                        logger.info(f"[CACHE] Deduplicated {len(formatted_codes) - len(unique_codes)} duplicate codes")
+                    
+                    return unique_codes
+                else:
+                    logger.debug("[CACHE] Cache hit but no codes found")
+            else:
+                logger.debug("[CACHE] No cached Gmail codes found")
+        
+        except Exception as e:
+            logger.debug(f"[CACHE] Error checking Gmail cache: {e}")
+    
+    # Try Gmail extraction if page is available
     if GMAIL_ENABLED and page:
         try:
             from extractors.gmail_extractor import GmailCodeExtractor
@@ -292,23 +420,23 @@ async def parse_codes_with_gmail(page: Page = None, course_code: Optional[str] =
             # Import playwright for separate browser instance
             from playwright.async_api import async_playwright
             
-            # Create a separate headed browser instance for Gmail processing
-            # This ensures Gmail interaction is visible while keeping attendance submission headless
+            # Create a separate headless browser instance for Gmail processing
+            # This ensures efficient Gmail processing while keeping attendance submission headless
             async with async_playwright() as p_gmail:
                 browser_type = p_gmail.chromium  # Use chromium for Gmail
                 # Use system browser channel if available
-                launch_kwargs = {"headless": False}
+                launch_kwargs = {"headless": True}
                 channel = os.getenv("BROWSER_CHANNEL")
                 if channel:
                     launch_kwargs["channel"] = channel
-                gmail_browser = await browser_type.launch(**launch_kwargs)  # Force headed mode for Gmail
+                gmail_browser = await browser_type.launch(**launch_kwargs)  # Headless mode for Gmail
                 
                 gmail_context = await gmail_browser.new_context(
                     storage_state=storage_state if os.path.exists(storage_state) else None
                 )
                 gmail_page = await gmail_context.new_page()
                 
-                logger.info("[STEP] Using headed mode for Gmail processing...")
+                logger.info("[STEP] Using headless mode for Gmail processing...")
                 extractor = GmailCodeExtractor()
                 gmail_codes = await extractor.extract_codes_from_gmail(
                     page=gmail_page,
@@ -570,9 +698,16 @@ async def submit_codes_intelligently(page: Page, entries: List[Dict[str, Optiona
     
     # Separate precise matches from fallbacks
     precise_codes = [item for item in entries if item.get('source') == 'gmail_precise']
+    # Treat gmail_text_body as high-priority fallback (more reliable than generic gmail)
+    gmail_text_codes = [item for item in entries if item.get('source') == 'gmail_text_body']
     fallback_codes = [item for item in entries if item.get('source') in ('gmail_fallback', 'gmail', None)]
     
-    logger.debug(f"[INTELLIGENT] {course}: {len(precise_codes)} precise codes, {len(fallback_codes)} fallback codes")
+    logger.debug(f"[INTELLIGENT] {course}: {len(precise_codes)} precise codes, {len(gmail_text_codes)} gmail_text_body codes, {len(fallback_codes)} fallback codes")
+    
+    # Debug: Show actual sources for troubleshooting
+    if entries:
+        sources = [item.get('source', 'None') for item in entries]
+        logger.debug(f"[INTELLIGENT] {course}: All code sources: {sources}")
     
     # Phase 1: Try precise slot-code matches first
     if precise_codes:
@@ -610,6 +745,20 @@ async def submit_codes_intelligently(page: Page, entries: List[Dict[str, Optiona
         
         except Exception as e:
             logger.debug(f"[PRECISE ERROR] {course}: {e}")
+    
+    # Phase 1.5: Try gmail_text_body codes (high-priority fallback)
+    if gmail_text_codes:
+        logger.info(f"[HIGH-PRIORITY] {course} - Trying {len(gmail_text_codes)} Gmail text body codes...")
+        for code_info in gmail_text_codes:
+            code_val = code_info.get('code')
+            if code_val:
+                logger.info(f"[HIGH-PRIORITY] {course} - Trying Gmail text body code: {code_val}")
+                ok, msg = await submit_code_on_entry(page, code_val)
+                if ok:
+                    logger.info(f"[HIGH-PRIORITY SUCCESS] {course}: {code_val}")
+                    return True, f"gmail text body: {code_val}"
+                else:
+                    logger.debug(f"[HIGH-PRIORITY FAILED] {course}: {msg}")
     
     # Phase 2: Fallback to polling remaining codes
     if fallback_codes:
@@ -809,6 +958,9 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             await page.goto(units_url, timeout=60000)
             
             # Phase 1: Extract all attendance codes from Gmail in one session
+            # In dry-run, bypass Gmail cache to reflect current inbox
+            if dry_run:
+                os.environ['GMAIL_FORCE_REFRESH'] = '1'
             logger.info(f"[PHASE 1] Extracting attendance codes from Gmail for all courses...")
             all_course_codes = {}  # {course: [codes]}
             

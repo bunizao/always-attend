@@ -15,6 +15,8 @@ from utils.env_utils import load_env
 class GmailCodeExtractor:
     def __init__(self):
         self.gmail_base_url = "https://mail.google.com"
+        self._last_query: Optional[str] = None
+        self._last_search_url: Optional[str] = None
         self.codes_patterns = [
             # Common attendance code patterns
             r'attendance\s+code[:\s]+([A-Z0-9]{4,8})',
@@ -49,6 +51,58 @@ class GmailCodeExtractor:
         except Exception as e:
             logger.warning(f"[INIT] Failed to initialize OCR extractor: {e}")
         
+    def _extract_course_code(self, text: str) -> Optional[str]:
+        """Extract course code like FIT1047 from arbitrary text."""
+        try:
+            # Match patterns like FIT1047, FIT1047_S2_2025, etc.
+            m = re.search(r'([A-Z]{3}\d{4})', (text or '').upper())
+            return m.group(1) if m else None
+        except Exception:
+            return None
+
+    async def _ensure_on_search(self, page: Page) -> None:
+        """Ensure we are on a Gmail search results page, not Inbox.
+
+        If current URL isn't a search URL, re-navigate to the last search URL or re-run the last query.
+        """
+        try:
+            url = page.url
+        except Exception:
+            url = ""
+        
+        # Check if we're on a search results page
+        # Gmail can show search results in multiple URL formats:
+        # 1. https://mail.google.com/mail/u/0/#search/query
+        # 2. https://mail.google.com/mail/u/0/?q=query (but may redirect to #inbox)
+        # 3. https://mail.google.com/mail/u/0/?q=query#search/query
+        is_search = ('/#search/' in url) or ('?q=' in url and '#search' in url) or ('?q=' in url and '#inbox' not in url)
+        
+        if is_search:
+            logger.debug(f"[DEBUG] Already on search page: {url}")
+            return
+            
+        logger.debug(f"[DEBUG] Not on search page, current URL: {url}")
+        
+        # Try to go back to last search URL first
+        if self._last_search_url:
+            try:
+                logger.debug(f"[DEBUG] Navigating back to last search URL: {self._last_search_url}")
+                await page.goto(self._last_search_url, timeout=15000)
+                await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=8000)
+                logger.debug("[DEBUG] Successfully returned to search results")
+                return
+            except Exception as e:
+                logger.debug(f"[DEBUG] Failed to return to last search URL: {e}")
+        
+        # Try re-running the last query
+        last_q = self._last_query or os.getenv('LAST_GMAIL_QUERY', '')
+        if last_q:
+            logger.debug(f"[DEBUG] Re-running search query: {last_q}")
+            await self._perform_gmail_search(page, last_q)
+            return
+            
+        logger.warning("[WARNING] Could not ensure we're on search results page")
+
     async def extract_codes_from_gmail(self, 
                                      page: Page,
                                      storage_state: str = None,
@@ -78,14 +132,15 @@ class GmailCodeExtractor:
         except Exception:
             timeout_sec = 300
 
-        # Determine effective query early and check cache
+        # Determine effective query early and check cache (unless force refresh)
         effective_query = search_query or self._build_search_query(search_days, week_number)
         cache = GmailCache()
         cache_key = cache.make_key(search_query=effective_query, target_email=target_email)
-        cached = cache.get(cache_key)
-        if cached is not None:
-            logger.info(f"[CACHE] Using cached Gmail results ({len(cached.get('codes', []))} codes)")
-            return cached.get('codes', [])
+        if os.getenv('GMAIL_FORCE_REFRESH', '0') not in ('1','true','True'):
+            cached = cache.get(cache_key)
+            if cached is not None:
+                logger.info(f"[CACHE] Using cached Gmail results ({len(cached.get('codes', []))} codes)")
+                return cached.get('codes', [])
 
         async def _do_extract() -> List[Dict[str, Any]]:
             logger.info(f"[STEP] Navigating to Gmail...")
@@ -175,7 +230,8 @@ class GmailCodeExtractor:
             os.environ['LAST_GMAIL_QUERY'] = q
             await self._perform_gmail_search(page, q)
 
-            # Phase A: collect all emails’ text hints and images
+            # Phase A: ensure we are on search results, then collect text hints and images
+            await self._ensure_on_search(page)
             text_codes, image_items = await self._collect_text_and_images(page)
 
             # Phase B: OCR all images in batch
@@ -183,7 +239,7 @@ class GmailCodeExtractor:
             if self.ocr_extractor and image_items:
                 ocr_method = os.getenv("OCR_METHOD", "auto")
                 try:
-                    ocr_codes = await self.ocr_extractor.extract_codes_from_images(image_items, ocr_method)
+                    ocr_codes = await self.ocr_extractor.extract_codes_from_images(image_items, ocr_method, page)
                     for c in ocr_codes:
                         c['source'] = 'gmail_ocr'
                 except Exception as e:
@@ -547,31 +603,87 @@ class GmailCodeExtractor:
             async def do_direct_search() -> bool:
                 try:
                     q_enc = quote(query, safe='')
+                    
+                    # Method 1: Try hash-based search first (most reliable)
                     url_hash = f"https://mail.google.com/mail/u/0/#search/{q_enc}"
                     await page.goto(url_hash, timeout=20000)
-                    # Wait briefly for results list area
-                    try:
-                        await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=4000)
-                        logger.info(f"[OK] Gmail direct search navigated: {url_hash}")
-                        return True
-                    except Exception:
-                        pass
-                    # Fallback: query param style
-                    url_q = f"https://mail.google.com/mail/u/0/?q={q_enc}"
+                    await page.wait_for_timeout(2000)  # Wait for search to process
+                    
+                    # Check if we're actually on search results
+                    current_url = page.url
+                    if '/#search/' in current_url:
+                        try:
+                            await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=6000)
+                            logger.info(f"[OK] Gmail hash search navigated: {url_hash}")
+                            os.environ['LAST_GMAIL_QUERY'] = query
+                            self._last_query = query
+                            self._last_search_url = url_hash
+                            return True
+                        except Exception:
+                            logger.debug("[DEBUG] Hash search loaded but no email elements found")
+                    
+                    # Method 2: Query param style with forced search hash
+                    url_q = f"https://mail.google.com/mail/u/0/?q={q_enc}#search/{q_enc}"
                     await page.goto(url_q, timeout=20000)
-                    try:
-                        await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=4000)
-                        logger.info(f"[OK] Gmail query-param search navigated: {url_q}")
-                        return True
-                    except Exception:
-                        return False
-                except Exception:
+                    await page.wait_for_timeout(2000)
+                    
+                    current_url = page.url
+                    if '#search/' in current_url or ('#inbox' not in current_url and '?q=' in current_url):
+                        try:
+                            await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=6000)
+                            logger.info(f"[OK] Gmail query-param search navigated: {url_q}")
+                            os.environ['LAST_GMAIL_QUERY'] = query
+                            self._last_query = query
+                            self._last_search_url = url_q
+                            return True
+                        except Exception:
+                            logger.debug("[DEBUG] Query param search loaded but no email elements found")
+                    
+                    # Method 3: If we ended up on inbox, force navigation to search
+                    if '#inbox' in current_url:
+                        logger.debug("[DEBUG] Gmail redirected to inbox, forcing search navigation")
+                        # Use JavaScript to force search
+                        try:
+                            js_search = f"""
+                                window.location.hash = 'search/{q_enc}';
+                            """
+                            await page.evaluate(js_search)
+                            await page.wait_for_timeout(3000)
+                            
+                            current_url = page.url
+                            if '#search/' in current_url:
+                                await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=6000)
+                                logger.info(f"[OK] Gmail JavaScript search navigated: {current_url}")
+                                os.environ['LAST_GMAIL_QUERY'] = query
+                                self._last_query = query
+                                self._last_search_url = current_url
+                                return True
+                        except Exception as e:
+                            logger.debug(f"[DEBUG] JavaScript search failed: {e}")
+                    
+                    return False
+                except Exception as e:
+                    logger.debug(f"[DEBUG] Direct search failed: {e}")
                     return False
 
             if direct_first:
                 if await do_direct_search():
-                    logger.info(f"[OK] Gmail search completed for: {query}")
-                    return
+                    # Verify we're actually on search results
+                    current_url = page.url
+                    is_search = ('/#search/' in current_url) or ('?q=' in current_url and '#search' in current_url) or ('?q=' in current_url and '#inbox' not in current_url)
+                    if is_search:
+                        logger.info(f"[OK] Gmail search completed for: {query}")
+                        logger.debug(f"[DEBUG] Confirmed on search page: {current_url}")
+                        return
+                    else:
+                        logger.warning(f"[WARNING] Search navigation successful but not on search page: {current_url}")
+                        # Try to wait a bit more for the page to load properly
+                        await page.wait_for_timeout(2000)
+                        current_url = page.url
+                        is_search = ('/#search/' in current_url) or ('?q=' in current_url and 'search' in current_url)
+                        if is_search:
+                            logger.info(f"[OK] Gmail search completed after delay: {query}")
+                            return
 
             # Fallback: interact with the UI search box
             if os.getenv("GMAIL_UI_SEARCH_FALLBACK", "0") not in ("1", "true", "True"):
@@ -622,6 +734,13 @@ class GmailCodeExtractor:
 
             # Wait a moment for results
             await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=6000)
+            os.environ['LAST_GMAIL_QUERY'] = query
+            self._last_query = query
+            try:
+                # Read current URL as the last search URL
+                self._last_search_url = page.url
+            except Exception:
+                pass
             logger.info(f"[OK] Gmail search completed for: {query}")
 
         except Exception as e:
@@ -635,9 +754,27 @@ class GmailCodeExtractor:
         text_codes: List[Dict[str, Any]] = []
         all_images: List[Dict[str, Any]] = []
 
+        # Ensure we're on search results page before processing
+        await self._ensure_on_search(page)
+        
         # Reuse selection logic from _extract_codes_from_emails, but defer OCR and aggregate
         try:
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(2000)  # Give more time for search results to load
+
+            # First, verify we're actually on search results
+            current_url = page.url
+            is_search = ('/#search/' in current_url) or ('?q=' in current_url and '#search' in current_url) or ('?q=' in current_url and '#inbox' not in current_url)
+            
+            if not is_search:
+                logger.warning(f"[WARNING] Still not on search page after ensure: {current_url}")
+                # Try one more time to get to search results
+                if self._last_search_url:
+                    try:
+                        await page.goto(self._last_search_url, timeout=15000)
+                        await page.wait_for_timeout(2000)
+                    except Exception as e:
+                        logger.warning(f"[WARNING] Final attempt to get to search failed: {e}")
+                        return text_codes, all_images
 
             email_selectors = [
                 '[role="main"] tr[jsaction]',
@@ -664,6 +801,15 @@ class GmailCodeExtractor:
 
             if not emails or email_count == 0:
                 logger.warning("No emails found in search results")
+                # Debug: check what's on the page
+                try:
+                    page_text = await page.inner_text('body')
+                    if 'no conversations' in page_text.lower():
+                        logger.info("[DEBUG] Gmail shows 'no conversations' - search returned no results")
+                    else:
+                        logger.debug(f"[DEBUG] Page content preview: {page_text[:200]}...")
+                except Exception:
+                    pass
                 return text_codes, all_images
 
             # Apply optional cap - user specifically wants only 4 original emails
@@ -694,6 +840,7 @@ class GmailCodeExtractor:
                         'code': code,
                         'subject': subject_text.strip(),
                         'preview': (preview_text or '').strip()[:100],
+                        'course': self._extract_course_code(listing_text),
                         'source': 'gmail_text',
                         'extracted_at': datetime.now().isoformat(),
                     })
@@ -701,14 +848,18 @@ class GmailCodeExtractor:
                 # Open the email to scan images, then go back to search results
                 try:
                     logger.debug(f"[DEBUG] Processing email {i+1}/{email_count}: {subject_text[:30]}...")
-                    await email_el.click(timeout=10000)  # Shorter timeout for clicks
-                    await page.wait_for_timeout(1000)  # Shorter wait for page load
+                    await email_el.click(timeout=10000)
+                    # Wait for message view content
+                    try:
+                        await page.wait_for_selector('div.a3s, [data-message-id]', timeout=8000)
+                    except Exception:
+                        await page.wait_for_timeout(1000)
                     
                     if self.ocr_extractor:
                         try:
                             images = await asyncio.wait_for(
                                 self.ocr_extractor.detect_images_in_gmail(page),
-                                timeout=15.0  # 15 second timeout for image detection
+                                timeout=20.0  # 20s for slower Gmail loads
                             )
                             # Tag with subject for later context
                             for img in images:
@@ -720,29 +871,70 @@ class GmailCodeExtractor:
                             logger.warning(f"[WARNING] Image detection timeout for email {i+1}")
                         except Exception as e:
                             logger.debug(f"[DEBUG] Error detecting images in email {i+1}: {e}")
+
+                    # Also try to extract text codes from full body if present (handles no-image emails)
+                    try:
+                        body_elem = page.locator('div.a3s, .ii.gt').first
+                        if await body_elem.count() > 0:
+                            body_text = await body_elem.inner_text()
+                            body_codes = self._extract_codes_from_text(body_text)
+                            if body_codes:
+                                for c in body_codes:
+                                    text_codes.append({
+                                        'code': c,
+                                        'subject': subject_text.strip(),
+                                        'preview': (preview_text or '').strip()[:100],
+                                        'course': self._extract_course_code(subject_text) or self._extract_course_code(body_text),
+                                        'source': 'gmail_text_body',
+                                        'extracted_at': datetime.now().isoformat(),
+                                    })
+                    except Exception as e:
+                        logger.debug(f"[DEBUG] Failed to extract text codes from body for email {i+1}: {e}")
                 except Exception as e:
                     logger.warning(f"[WARNING] Error processing email {i+1}: {e}")
                 finally:
                     # Return to search results without jumping to inbox
                     try:
-                        # Instead of go_back which might jump to inbox, re-run the search
-                        last_query = os.getenv('LAST_GMAIL_QUERY', '')
-                        if last_query:
-                            await asyncio.wait_for(
-                                self._perform_gmail_search(page, last_query),
-                                timeout=10.0
-                            )
-                        else:
+                        logger.debug(f"[DEBUG] Returning to search results after processing email {i+1}")
+                        
+                        # Method 1: Try going back with browser back button
+                        try:
                             await page.go_back(timeout=5000)
+                            await page.wait_for_timeout(1000)
+                            current_url = page.url
+                            if ('/#search/' in current_url) or ('?q=' in current_url and '#inbox' not in current_url):
+                                logger.debug("[DEBUG] Successfully returned via back button")
+                                continue
+                        except Exception as e:
+                            logger.debug(f"[DEBUG] Back button failed: {e}")
+                        
+                        # Method 2: Direct navigation to last search URL
+                        if self._last_search_url:
+                            logger.debug(f"[DEBUG] Navigating to last search URL: {self._last_search_url}")
+                            await page.goto(self._last_search_url, timeout=15000)
+                            await page.wait_for_selector('[role="main"] tr[jsaction], .zA, [data-thread-id]', timeout=8000)
+                            logger.debug("[DEBUG] Successfully returned via direct navigation")
+                        else:
+                            # Method 3: Re-run search query
+                            last_query = self._last_query or os.getenv('LAST_GMAIL_QUERY', '')
+                            if last_query:
+                                logger.debug(f"[DEBUG] Re-running search query: {last_query}")
+                                await asyncio.wait_for(self._perform_gmail_search(page, last_query), timeout=10.0)
+                            else:
+                                logger.debug("[DEBUG] Using ensure_on_search fallback")
+                                await self._ensure_on_search(page)
+                                
                     except Exception as e:
                         logger.debug(f"[DEBUG] Failed to return to search results: {e}")
-                        # If all else fails, try to re-navigate to search
+                        # Final fallback: try to re-navigate to search
                         try:
-                            last_query = os.getenv('LAST_GMAIL_QUERY', '')
+                            last_query = self._last_query or os.getenv('LAST_GMAIL_QUERY', '')
                             if last_query:
+                                logger.debug("[DEBUG] Final fallback: re-running search")
                                 await self._perform_gmail_search(page, last_query)
-                        except Exception:
-                            pass
+                        except Exception as fallback_e:
+                            logger.warning(f"[WARNING] All attempts to return to search failed: {fallback_e}")
+                            break  # Exit the loop if we can't get back to search results
 
         except Exception as e:
             logger.warning(f"Error during collection of text/images: {e}")
@@ -1049,13 +1241,14 @@ class GmailCodeExtractor:
                 
                 # Extract codes from new images only
                 ocr_method = os.getenv("OCR_METHOD", "auto")
-                image_codes = await self.ocr_extractor.extract_codes_from_images(new_images, ocr_method)
+                image_codes = await self.ocr_extractor.extract_codes_from_images(new_images, ocr_method, page)
                 
                 # Add OCR codes to results
                 for code_info in image_codes:
                     codes.append({
                         'code': code_info['code'],
                         'subject': subject_text.strip(),
+                        'course': self._extract_course_code(subject_text),
                         'source': 'gmail_ocr',
                         'method': code_info.get('method', 'unknown'),
                         'image_url': code_info.get('image_url', ''),
@@ -1076,21 +1269,21 @@ class GmailCodeExtractor:
             
             # Navigate back to email list
             if page.url != original_url:
-                await page.go_back()
-                await page.wait_for_timeout(1000)
+                await self._ensure_on_search(page)
+                await page.wait_for_timeout(500)
                 
         except Exception as e:
             logger.warning(f"Error extracting codes from email images: {e}")
             # Try to navigate back on error
             try:
-                await page.go_back()
+                await self._ensure_on_search(page)
             except Exception:
                 pass
     
     def _extract_course_code_from_subject(self, subject: str) -> Optional[str]:
         """Extract course code from email subject."""
         # Look for patterns like FIT1047, BUS2020, etc.
-        course_pattern = r'\b([A-Z]{2,4}\d{4})\b'
+        course_pattern = r'\b([A-Z]{3}\d{4})\b'
         match = re.search(course_pattern, subject.upper())
         return match.group(1) if match else None
     
