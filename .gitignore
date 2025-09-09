@@ -215,3 +215,4 @@ CLAUDE.md
 /tests/
 .env.backup
 /.cache_cli_test
+/.git.bak_1757433010
