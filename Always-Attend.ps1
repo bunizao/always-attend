@@ -32,11 +32,41 @@ function Write-Header {
 
 Write-Header "Always Attend - PowerShell Launcher"
 
-# Check Git installation (optional for updates)
+# Check or install Git (optional for updates)
 try {
     git --version 2>&1 | Out-Null
 } catch {
-    Write-ColorText "⚠️  Git not found. Updates will be skipped." "Yellow"
+    Write-ColorText "⚠️  Git not found. Attempting installation..." "Yellow"
+    $installed = $false
+    try {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-ColorText "Installing Git via winget..." "Blue"
+            winget install -e --id Git.Git -h --accept-package-agreements --accept-source-agreements | Out-Null
+            $installed = $true
+        }
+    } catch {}
+    if (-not $installed) {
+        try {
+            if (Get-Command choco -ErrorAction SilentlyContinue) {
+                Write-ColorText "Installing Git via Chocolatey..." "Blue"
+                choco install git -y | Out-Null
+                $installed = $true
+            }
+        } catch {}
+    }
+    if (-not $installed) {
+        try {
+            $url = 'https://github.com/git-for-windows/git/releases/latest/download/Git-64-bit.exe'
+            $out = Join-Path $env:TEMP 'git-installer.exe'
+            Write-ColorText "Downloading Git installer..." "Blue"
+            Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -ErrorAction SilentlyContinue
+            if (Test-Path $out) {
+                Write-ColorText "Running Git installer silently..." "Blue"
+                Start-Process -FilePath $out -ArgumentList '/VERYSILENT','/NORESTART','/NOCANCEL' -Wait
+            }
+        } catch {}
+    }
+    try { git --version 2>&1 | Out-Null; Write-ColorText "✅ Git installed" "Green" } catch { Write-ColorText "⚠️  Git still not available. Updates will be skipped." "Yellow" }
 }
 
 # Helpers: latest week detection and week prompt

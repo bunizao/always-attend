@@ -142,10 +142,34 @@ echo Loading configuration...
 timeout /t 1 /nobreak >nul
 echo.
 
-REM Check Git installation (optional for updates)
+REM Check or install Git (optional for updates)
 git --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ⚠️  Git not found. Updates will be skipped.
+    echo ⚠️  Git not found. Attempting installation...
+    where winget >nul 2>&1
+    if %errorlevel%==0 (
+        echo Installing Git via winget...
+        winget install -e --id Git.Git -h --accept-package-agreements --accept-source-agreements
+    ) else (
+        where choco >nul 2>&1
+        if %errorlevel%==0 (
+            echo Installing Git via Chocolatey...
+            choco install git -y
+        ) else (
+            echo Downloading Git installer...
+            powershell -NoProfile -ExecutionPolicy Bypass -Command "try{Invoke-WebRequest -Uri 'https://github.com/git-for-windows/git/releases/latest/download/Git-64-bit.exe' -OutFile \"$env:TEMP\\git-installer.exe\" -UseBasicParsing}catch{}"
+            if exist "%TEMP%\git-installer.exe" (
+                echo Running Git installer silently...
+                "%TEMP%\git-installer.exe" /VERYSILENT /NORESTART /NOCANCEL
+            )
+        )
+    )
+    git --version >nul 2>&1
+    if %errorlevel%==0 (
+        echo ✅ Git installed
+    ) else (
+        echo ⚠️  Git still not available. Updates will be skipped.
+    )
 )
 
 REM Check if this is first time

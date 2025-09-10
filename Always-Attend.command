@@ -182,9 +182,31 @@ detect_language
 # Show banner
 show_banner
 
-# Check Git installation (optional for updates)
+# Check or install Git (optional for updates)
 if ! command -v git >/dev/null 2>&1; then
-    echo -e "${YELLOW}⚠️  Git not found. Updates will be skipped.${NC}"
+    echo -e "${YELLOW}⚠️  Git not found. Attempting installation...${NC}"
+    if command -v brew >/dev/null 2>&1; then
+        echo -e "${BLUE}Installing Git via Homebrew...${NC}"
+        brew install git || echo -e "${YELLOW}⚠️  Homebrew install failed.${NC}"
+    else
+        # Try Xcode Command Line Tools which include git
+        if ! xcode-select -p >/dev/null 2>&1; then
+            echo -e "${BLUE}Installing Xcode Command Line Tools (provides git)...${NC}"
+            xcode-select --install >/dev/null 2>&1 || true
+            echo -e "${YELLOW}Please complete the installer window, then press Enter to continue...${NC}"
+            read
+        else
+            echo -e "${YELLOW}Opening Git for macOS download page...${NC}"
+            open "https://git-scm.com/download/mac" >/dev/null 2>&1 || true
+            echo -e "${YELLOW}Install Git, then press Enter to continue...${NC}"
+            read
+        fi
+    fi
+    if command -v git >/dev/null 2>&1; then
+        echo -e "${GREEN}✅ Git installed${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Git still not available. Updates will be skipped.${NC}"
+    fi
 fi
 
 # Helper: detect latest week number from data/<COURSE>/<WEEK>.json
