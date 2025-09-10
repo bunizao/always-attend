@@ -182,6 +182,11 @@ detect_language
 # Show banner
 show_banner
 
+# Check Git installation (optional for updates)
+if ! command -v git >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  Git not found. Updates will be skipped.${NC}"
+fi
+
 # Helper: detect latest week number from data/<COURSE>/<WEEK>.json
 detect_latest_week() {
     local latest=""

@@ -24,75 +24,28 @@ def _append_to_env_file(env_file: str, key: str, value: str) -> None:
 
 
 def check_for_updates():
-    """Checks for updates and restarts the script if necessary."""
-    # Only check for updates if not in a CI environment
+    """Attempt to pull latest changes; continue silently on failure."""
     if os.getenv('CI') in ('true', '1'):
-        logger.info("CI environment detected, skipping update check.")
         return
-
     try:
-        logger.info("Checking for updates...")
-        
-        # Check if .git directory exists
         if not os.path.isdir('.git'):
-            logger.info("Not a git repository, skipping update check.")
             return
-
-        # Determine remote URL; skip if SSH or unknown
-        try:
-            remote_url_proc = subprocess.run([
-                "git", "remote", "get-url", "origin"
-            ], check=True, capture_output=True, text=True)
-            remote_url = (remote_url_proc.stdout or "").strip()
-        except Exception:
-            remote_url = ""
-
-        if remote_url.startswith("git@") or remote_url.startswith("ssh://"):
-            logger.info("Git remote uses SSH; skipping update check to avoid key prompts.")
+        # Simple pull; if there are updates, restart this process
+        pull = subprocess.run(["git", "pull", "--ff-only"], capture_output=True, text=True)
+        if pull.returncode != 0:
+            # Noisy errors aren't helpful at runtime; continue
             return
-
-        # Fetch the latest changes from the remote
-        try:
-            subprocess.run(["git", "fetch"], check=True, capture_output=True)
-        except subprocess.CalledProcessError as e:
-            err = (e.stderr or "").lower()
-            if "permission denied" in err or "could not read from remote repository" in err:
-                logger.info("No permission to fetch updates; skipping update check.")
-                return
-            logger.warning(f"Update fetch failed; skipping: {e.stderr}")
-            return
-        
-        # Check if the local branch is behind
-        status_result = subprocess.run(["git", "status", "-uno"], check=True, capture_output=True, text=True)
-        
-        if "Your branch is behind" in status_result.stdout:
-            logger.info("New version available. Pulling changes...")
-            
-            # Pull the changes
-            try:
-                pull_result = subprocess.run(["git", "pull"], check=True, capture_output=True, text=True)
-                logger.info(pull_result.stdout)
-            except subprocess.CalledProcessError as e:
-                err = (e.stderr or "").lower()
-                if "permission denied" in err or "could not read from remote repository" in err:
-                    logger.info("No permission to pull updates; skipping auto-update.")
-                    return
-                logger.warning(f"Update pull failed; skipping: {e.stderr}")
-                return
-            
-            logger.info("Update complete. Restarting script...")
-            
-            # Restart the script
+        out = (pull.stdout or "").strip()
+        if out and "Already up to date" not in out:
+            logger.info(out)
+            # Restart the script after update
             os.execv(sys.executable, ['python'] + sys.argv)
-        else:
-            logger.info("Already up to date.")
-            
     except FileNotFoundError:
-        logger.warning("git command not found. Skipping update check.")
-    except subprocess.CalledProcessError as e:
-        logger.info("Skipping update check due to git error.")
-    except Exception as e:
-        logger.info("Skipping update check due to unexpected error.")
+        # git not available; ignore
+        return
+    except Exception:
+        # any unexpected issue; continue
+        return
 
 def _is_storage_state_effective(path: str) -> bool:
     # Preserve name for existing calls while delegating to util

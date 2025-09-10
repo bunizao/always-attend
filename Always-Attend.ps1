@@ -32,6 +32,13 @@ function Write-Header {
 
 Write-Header "Always Attend - PowerShell Launcher"
 
+# Check Git installation (optional for updates)
+try {
+    git --version 2>&1 | Out-Null
+} catch {
+    Write-ColorText "⚠️  Git not found. Updates will be skipped." "Yellow"
+}
+
 # Helpers: latest week detection and week prompt
 function Get-LatestWeek {
     $latest = $null

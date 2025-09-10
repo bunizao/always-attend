@@ -26,69 +26,23 @@
 
 
 
-## Prerequisites
+## 🚀 Easy Launch (Recommended)
 
-- Python 3.8 or later (3.11+ recommended)
-- Google Chrome or Microsoft Edge installed on your computer
+Double‑click to run with our enhanced first‑time setup:
 
-## Install
+• macOS: `Always-Attend.command`
+• Windows: `Always-Attend.bat` or `Always-Attend.ps1`
 
-0) Install Git
-- Download from https://git-scm.com/downloads and follow the installer.
+What the launchers do:
+- Check Python (and Git if available) on your system
+- Create/activate a virtualenv and install dependencies (first run)
+- Run first‑time setup wizard (portal URL, credentials, week, browser)
+- Auto‑detect latest week from `data/*/*.json` and set `WEEK_NUMBER`
+  - To prompt every run, set `WEEK_PROMPT=1` before launching
 
-1) Clone and enter the project
-```bash
-git clone https://github.com/bunizao/always-attend.git
-cd always-attend
-```
-
-2) Create and activate a virtual environment
-- macOS / Linux:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-- Windows (PowerShell):
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-If script execution is disabled, run:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-Then rerun `.venv\Scripts\Activate.ps1`. If PowerShell still errors, right-click PowerShell, choose "Run as administrator", and run `Activate.ps1` again.
-
-3) Install dependencies
-```bash
-pip install -U pip
-pip install -r requirements.txt
-```
-
-4) Set environment variables (Optional - First-time setup wizard will handle this)
-```bash
-cp .env.example .env
-```
-Then edit `.env` and set your values, or use the launcher's first-time setup wizard. Quick edit in VS Code:
-```bash
-code .env
-```
-
-Important:
-- The first-time setup wizard in the launchers will automatically configure most settings
-- For Monash University Malaysia, the wizard provides a quick setup option
-- Always include the `https://` prefix in URLs
-> [!IMPORTANT]
-> This project is **not funded, affiliated with, or endorsed by any educational institution**.  
-> It is an independent project and has no official connection with any university.
-
-Alternatively, update `PORTAL_URL` inline:
-```bash
-# macOS
-sed -i '' 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
-# Linux
-sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
-```
+Notes:
+- Git is optional; if not installed, updates will be skipped
+- Chrome/Edge must be installed (system browser is used by default)
 
 5) Quick Start - Use the Enhanced Launchers (Recommended)
 ```bash

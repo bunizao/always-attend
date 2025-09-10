@@ -142,6 +142,12 @@ echo Loading configuration...
 timeout /t 1 /nobreak >nul
 echo.
 
+REM Check Git installation (optional for updates)
+git --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ⚠️  Git not found. Updates will be skipped.
+)
+
 REM Check if this is first time
 if not exist ".first_time_setup_complete" (
     call :show_privacy_policy
