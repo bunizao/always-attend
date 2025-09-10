@@ -104,11 +104,10 @@ show_privacy_policy() {
     echo -e "${GREEN}$(t "data_processing" "Data Processing and Privacy:")${NC}"
     echo
     echo "• Your credentials are stored locally in encrypted format"
-    echo "• Gmail data is processed locally on your device"
-    echo "• If you choose AI OCR, images will be sent to external APIs (Gemini/ChatGPT)"
+    echo "• No email data is processed by this tool"
     echo "• Only attendance code images are processed by AI - no personal data"
     echo "• All sensitive data remains secure and stored locally"
-    echo "• No data is shared with third parties except chosen AI providers for OCR"
+    echo "• No data is shared with third parties"
     echo
     echo -e "${RED}⚠️  $(t "compliance_warning" "IMPORTANT: Ensure compliance with your institution's policies")${NC}"
     echo
@@ -165,47 +164,11 @@ first_time_setup() {
     echo "WEEK_NUMBER=$week_num" >> .env
     echo
     
-    # OCR Configuration
-    echo -e "${GREEN}4. $(t "ocr_config" "Attendance Code Processing Method")${NC}"
-    echo
-    echo "How would you like to process attendance codes from emails?"
-    echo "1) Local OCR (No external services, but requires additional dependencies)"
-    echo "2) AI-powered OCR (Send images to Gemini/ChatGPT for processing)"
-    echo "3) Manual extraction (Process codes manually when needed)"
-    echo
-    read -p "$(t "choose_ocr" "Please choose (1-3):")" ocr_choice
-    
-    case $ocr_choice in
-        1)
-            echo "OCR_ENABLED=1" >> .env
-            echo "OCR_METHOD=local" >> .env
-            echo -e "${YELLOW}⚠️  $(t "local_ocr_deps" "Local OCR requires additional dependencies. Install when prompted.")${NC}"
-            ;;
-        2)
-            echo "OCR_ENABLED=1" >> .env
-            echo "OCR_METHOD=ai" >> .env
-            echo
-            echo -e "${YELLOW}📋 $(t "ai_privacy_notice" "AI Processing Privacy Notice:")${NC}"
-            echo "• Only attendance code images will be sent to AI services"
-            echo "• No personal information or credentials are shared"
-            echo "• Images are processed temporarily and not stored by AI providers"
-            echo
-            read -p "$(t "enter_gemini_key" "Enter your Gemini API key (or press Enter to skip):")" gemini_key
-            if [ -n "$gemini_key" ]; then
-                echo "GEMINI_API_KEY=$gemini_key" >> .env
-            fi
-            echo
-            read -p "$(t "enter_openai_key" "Enter your OpenAI API key (or press Enter to skip):")" openai_key
-            if [ -n "$openai_key" ]; then
-                echo "OPENAI_API_KEY=$openai_key" >> .env
-            fi
-            ;;
-        3)
-            echo "OCR_ENABLED=0" >> .env
-            echo -e "${GREEN}✅ $(t "manual_processing" "Manual processing configured")${NC}"
-            ;;
-    esac
-    echo
+    # Step removed: Gmail/OCR features are not included
+    echo -e "${GREEN}4. $(t "browser_config" "Browser Configuration")${NC}"
+    echo "Using your system Chrome/Edge by default."
+    echo "You can change BROWSER/BROWSER_CHANNEL later in .env if needed."
+    echo >> .env
     
     # Create first-time flag
     touch .first_time_setup_complete
@@ -218,6 +181,24 @@ detect_language
 
 # Show banner
 show_banner
+
+# Helper: detect latest week number from data/<COURSE>/<WEEK>.json
+detect_latest_week() {
+    local latest=""
+    if [ -d "data" ]; then
+        # Find all *.json under data/*/, take numeric basename, compute max
+        while IFS= read -r -d '' f; do
+            base="${f##*/}"
+            base="${base%.json}"
+            if [[ "$base" =~ ^[0-9]+$ ]]; then
+                if [ -z "$latest" ] || [ "$base" -gt "$latest" ]; then
+                    latest="$base"
+                fi
+            fi
+        done < <(find data -type f -name '*.json' -print0 2>/dev/null)
+    fi
+    echo "$latest"
+}
 
 # Add preparing stage
 echo -e "${BLUE}$(t "preparing" "Preparing Always Attend...")${NC}"
@@ -359,7 +340,29 @@ echo -e "${BLUE}🚀 $(t "starting_program" "Starting Always Attend...")${NC}"
 echo -e "${YELLOW}$(t "auto_mode" "The program will automatically determine what actions are needed")${NC}"
 echo
 
-# Simply run the main program
+# Week selection: default is non-interactive
+DETECTED_WEEK="$(detect_latest_week)"
+if [ -z "$WEEK_NUMBER" ]; then
+  if [ "${WEEK_PROMPT:-0}" = "1" ]; then
+    echo -e "${BLUE}📅 Week Selection${NC}"
+    if [ -n "$DETECTED_WEEK" ]; then
+      read -p "Use week ${DETECTED_WEEK}? Press Enter to accept, or type another week number: " input_week
+      if [ -n "$input_week" ]; then
+        export WEEK_NUMBER="$input_week"
+      else
+        export WEEK_NUMBER="$DETECTED_WEEK"
+      fi
+    else
+      read -p "Enter current week number (e.g., 1,2,3...): " input_week
+      if [ -n "$input_week" ]; then export WEEK_NUMBER="$input_week"; fi
+    fi
+  else
+    # No prompt: silently use detected week if available
+    if [ -n "$DETECTED_WEEK" ]; then export WEEK_NUMBER="$DETECTED_WEEK"; fi
+  fi
+fi
+
+# Run the main program
 python main.py
 
 echo

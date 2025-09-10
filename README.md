@@ -102,7 +102,7 @@ What happens when you run this:
 - **First-time setup wizard** guides you through configuration if needed
 - **Privacy policy display** ensures compliance awareness
 - **Auto-configuration** for supported universities (Monash Malaysia option available)
-- **Gmail integration** automatically extracts codes from your institutional email
+- Automated navigation and submission with your provided code sources
 - **Intelligent submission** with precise slot matching and optimized polling
 - If no valid session is found, a browser window opens for one‑time sign‑in and MFA verification
 - The script navigates to your attendance portal and submits your codes efficiently
@@ -134,41 +134,29 @@ For easier usage, you can now double-click to run with our enhanced first-time s
 - **University configuration** with quick Monash Malaysia setup option
 - **Email and password input** during initial setup
 - **Week number configuration** for attendance tracking
-- **OCR method selection** with three options:
-  - Local OCR (no external services, requires dependencies)
-  - AI-powered OCR (Gemini/ChatGPT integration with API key input)
-  - Manual extraction (no automatic processing)
+- Focused configuration (portal URL, credentials, week, browser)
+- macOS/Windows launchers prompt for week every run: auto-detect latest week (e.g., 7) and press Enter to accept or type a different week
 - **Simplified execution**: Just runs `python main.py` directly, letting the program auto-determine needed actions
 - **No complex menus**: Streamlined user experience focused on core functionality
 
-## 📧 Gmail Integration (New!)
+## 📦 Code Sources
 
-The tool can now automatically extract attendance codes from your institutional Gmail account using the same Okta authentication session:
+Provide attendance codes via one of the sources below (in priority order):
 
 ```bash
-# Enable Gmail integration in your .env file (now enabled by default)
-GMAIL_ENABLED=1
-GMAIL_SEARCH_DAYS=7  # Search last 7 days of emails
+# Inline codes
+export CODES="Workshop 1:ABCD1;Workshop 2:EFGH2"
 
-# Run normally - Gmail will be checked first for codes automatically
-python main.py
+# Or local file (JSON array of {slot, code, date?})
+export CODES_FILE=/path/to/codes.json
+
+# Or remote JSON URL
+export CODES_URL=https://example.com/codes.json
+
+# Or auto-discover from repo layout
+export CODES_BASE_URL=https://raw.githubusercontent.com/you/repo/main
+export WEEK_NUMBER=6
 ```
-
-Features:
-- **Default enabled**: Gmail integration is now the primary method for code extraction
-- Uses existing Okta session cookies to access institutional Gmail  
-- Searches for attendance-related emails automatically
-- **Intelligent code extraction** with course grouping and precise slot matching
-- **Two-phase submission**: Precise matching first, fallback polling second (eliminates "ridiculous" polling of all codes)
-- Identifies course slots and dates from email content
-- **Optimized performance**: Groups codes by course and uses smart matching algorithms
-- Falls back to other code sources if no Gmail codes found
-
-The Gmail integration looks for patterns like:
-- "attendance code: ABC123"
-- "your code: DEF456" 
-- Workshop/tutorial/lab session information
-- Date and slot number extraction
 
 ## 📊 Statistics Tracking
 
@@ -243,8 +231,6 @@ submit.py
 | Variable | Type | Required | Description | Example |
 | --- | --- | --- | --- | --- |
 | `PORTAL_URL` | string URL | Yes | Attendance portal base URL | `https://attendance.monash.edu.my` |
-| `GMAIL_ENABLED` | flag (0/1 or true/false) | No | Enable Gmail code extraction | `1` |
-| `GMAIL_SEARCH_DAYS` | int | No | Days back to search Gmail | `7` |
 | `CODES_URL` | string URL | No | Direct URL to codes JSON | `https://example.com/codes.json` |
 | `CODES_FILE` | string path | No | Local path to codes JSON | `/home/user/codes.json` |
 | `CODES` | string | No | Inline `slot:code;slot:code` pairs | `"Workshop 1:ABCD1;Workshop 2:EFGH2"` |

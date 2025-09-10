@@ -237,27 +237,11 @@ def main():
         stats.print_stats()
         sys.exit(0)
 
-    # Get target email for Gmail integration
-    target_email = os.getenv("SCHOOL_EMAIL")
-    if not target_email and os.getenv("GMAIL_ENABLED", "1") in ("1", "true", "True"):
-        try:
-            target_email = input("Enter your school email address (preferably ending with .edu): ").strip()
-            if target_email and '@' in target_email:
-                logger.info(f"Using email: {target_email}")
-                # Save to .env file for future use
-                env_file = os.getenv('ENV_FILE', '.env')
-                _ensure_env_file(env_file)
-                _append_to_env_file(env_file, 'SCHOOL_EMAIL', target_email)
-            else:
-                target_email = None
-        except (KeyboardInterrupt, EOFError):
-            target_email = None
-
     if args.login_only:
         asyncio.run(_ensure_session(headed_default=headed_default))
     else:
         asyncio.run(_ensure_session(headed_default=headed_default))
-        asyncio.run(_run_submit(dry_run=bool(args.dry_run or os.getenv('DRY_RUN') in ('1','true','True')), target_email=target_email))
+        asyncio.run(_run_submit(dry_run=bool(args.dry_run or os.getenv('DRY_RUN') in ('1','true','True')), target_email=None))
 
 
 if __name__ == "__main__":

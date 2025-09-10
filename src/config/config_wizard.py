@@ -39,20 +39,7 @@ class ConfigWizard:
         print("\n" + "🔐 Authentication Setup".center(60, "-"))
         self._configure_credentials()
         
-        # OCR Configuration
-        if not self._has_ocr_configured(existing_config):
-            print("\n" + "🤖 OCR Configuration".center(60, "-"))
-            if not self._configure_ocr():
-                print("\n⚠️  Skipping OCR configuration. You can configure it later in .env")
-        else:
-            print("\n✅ OCR already configured")
-            
-        # GitHub fallback configuration
-        if not existing_config.get('GITHUB_TOKEN'):
-            print("\n" + "📝 GitHub Fallback Configuration".center(60, "-"))
-            self._configure_github_fallback()
-        else:
-            print("\n✅ GitHub fallback already configured")
+        # Gmail/OCR/GitHub features removed
         
         # Browser configuration
         print("\n" + "🌐 Browser Settings".center(60, "-"))
@@ -116,9 +103,7 @@ class ConfigWizard:
                 logger.warning(f"Error reading existing config: {e}")
         return config
         
-    def _has_ocr_configured(self, config: Dict[str, str]) -> bool:
-        """Check if OCR is already configured"""
-        return bool(config.get('GEMINI_API_KEY') or config.get('OPENAI_API_KEY'))
+    # Gmail/OCR removed
         
     def _configure_language(self) -> None:
         """Configure language preference"""
@@ -213,135 +198,16 @@ class ConfigWizard:
             print("✅ Using system Chrome browser (default)")
         
     def _configure_ocr(self) -> bool:
-        """Configure OCR settings"""
-        print("\n📷 Choose your preferred OCR method for extracting codes from images:")
-        print("Many schools send attendance codes as images/screenshots in emails.")
-        print("AI-powered OCR provides much higher accuracy than traditional OCR.")
-        
-        print("\n1. 🔵 Google Gemini (Recommended)")
-        print("   • Free tier: 15 requests/minute")
-        print("   • Cost: Free tier, then ~$0.0025 per image")
-        print("   • Quality: ⭐⭐⭐⭐⭐ Excellent AI vision with high accuracy")
-        
-        print("\n2. 🟢 OpenAI Vision (Most Accurate)")
-        print("   • Requires paid account")
-        print("   • Cost: ~$0.003 per image (gpt-4o-mini)")
-        print("   • Quality: ⭐⭐⭐⭐⭐ Premium AI vision, best for complex images")
-        
-        print("\n3. ⏭️  Skip OCR setup")
-        print("   • Use GitHub issues for manual processing")
-        print("   • Configure OCR later in .env file")
-        
-        while True:
-            choice = input("\nEnter your choice (1-3): ").strip()
-            
-            if choice == '1':
-                return self._setup_gemini()
-            elif choice == '2':
-                return self._setup_openai()
-            elif choice == '3':
-                return False
-            else:
-                print("❌ Invalid choice. Please enter 1, 2, or 3.")
+        """Legacy OCR config removed; no-op."""
+        return False
                 
-    def _setup_gemini(self) -> bool:
-        """Setup Google Gemini API"""
-        print("\n🔵 Setting up Google Gemini API")
-        print("\nTo get your Gemini API key:")
-        print("1. Visit: https://aistudio.google.com/app/apikey")
-        print("2. Sign in with your Google account")
-        print("3. Click 'Create API Key'")
-        print("4. Copy the generated key")
-        
-        api_key = input("\nPaste your Gemini API key (or press Enter to skip): ").strip()
-        
-        if api_key:
-            self.config['GEMINI_API_KEY'] = api_key
-            print("✅ Gemini API key configured")
-            
-            # Test the API key
-            if self._test_gemini_key(api_key):
-                print("✅ API key is valid and working")
-                return True
-            else:
-                print("⚠️  API key might be invalid, but configuration saved")
-                return True
-        else:
-            print("⏭️  Skipping Gemini setup")
-            return False
-            
-    def _setup_openai(self) -> bool:
-        """Setup OpenAI Vision API"""
-        print("\n🟢 Setting up OpenAI Vision API")
-        print("\nTo get your OpenAI API key:")
-        print("1. Visit: https://platform.openai.com/api-keys")
-        print("2. Sign in to your OpenAI account")
-        print("3. Click 'Create new secret key'")
-        print("4. Copy the generated key")
-        print("5. Make sure you have credits in your account")
-        
-        api_key = input("\nPaste your OpenAI API key (or press Enter to skip): ").strip()
-        
-        if api_key:
-            self.config['OPENAI_API_KEY'] = api_key
-            print("✅ OpenAI API key configured")
-            return True
-        else:
-            print("⏭️  Skipping OpenAI setup")
-            return False
+    # Gemini/OpenAI setup removed
             
     def _configure_github_fallback(self) -> None:
-        """Configure GitHub fallback for manual processing"""
-        print("\n📝 GitHub Fallback Configuration")
-        print("\nWhen OCR fails, we can create GitHub issues with image links")
-        print("for manual processing. This requires a GitHub token.")
-        
-        print("\nTo create a GitHub token:")
-        print("1. Visit: https://github.com/settings/tokens")
-        print("2. Click 'Generate new token (classic)'")
-        print("3. Select 'repo' scope")
-        print("4. Copy the generated token")
-        
-        setup = input("\nSet up GitHub fallback? (y/N): ").strip().lower()
-        
-        if setup in ['y', 'yes']:
-            token = input("Paste your GitHub token: ").strip()
-            if token:
-                self.config['GITHUB_TOKEN'] = token
-                
-                # Get repository info
-                owner = input(f"GitHub username (default: {os.getenv('USER', 'your-username')}): ").strip()
-                if not owner:
-                    owner = os.getenv('USER', 'your-username')
-                    
-                repo = input("Repository name (default: always-attend): ").strip()
-                if not repo:
-                    repo = "always-attend"
-                    
-                self.config['REPO_OWNER'] = owner
-                self.config['REPO_NAME'] = repo
-                
-                print("✅ GitHub fallback configured")
-            else:
-                print("⏭️  Skipping GitHub setup")
-        else:
-            print("⏭️  Skipping GitHub setup")
+        """Legacy GitHub fallback removed; no-op."""
+        return None
             
-    def _test_gemini_key(self, api_key: str) -> bool:
-        """Test if Gemini API key is valid"""
-        try:
-            import aiohttp
-            import asyncio
-            
-            async def test():
-                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as response:
-                        return response.status == 200
-                        
-            return asyncio.run(test())
-        except Exception:
-            return False
+    # Gmail/OCR removed
             
     def _save_config(self) -> None:
         """Save configuration to .env file"""
@@ -373,7 +239,6 @@ class ConfigWizard:
                     
             # Add new keys
             if keys_added != set(self.config.keys()):
-                updated_lines.append("\\n# OCR Configuration\\n")
                 for key, value in self.config.items():
                     if key not in keys_added:
                         updated_lines.append(f'{key}="{value}"\\n')
@@ -389,13 +254,6 @@ class ConfigWizard:
     @staticmethod
     def should_run_wizard() -> bool:
         """Check if the wizard should run (first time setup)"""
-        # Check if OCR is already configured
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        openai_key = os.getenv("OPENAI_API_KEY")
-        
-        if gemini_key or openai_key:
-            return False
-            
         # Check if .env exists and has some configuration
         if os.path.exists(".env"):
             try:
@@ -404,7 +262,7 @@ class ConfigWizard:
                     # If .env has more than just basic configuration, assume setup is done
                     config_lines = [line for line in content.split('\\n') 
                                   if line.strip() and not line.strip().startswith('#') and '=' in line]
-                    if len(config_lines) > 3:  # More than just basic portal config
+                    if len(config_lines) > 3:  # More than bare-minimum config
                         return False
             except Exception:
                 pass
@@ -414,13 +272,12 @@ class ConfigWizard:
     @staticmethod
     def prompt_user_for_wizard() -> bool:
         """Prompt user to run the configuration wizard"""
-        print("\\n🎯 OCR Configuration Setup")
+        print("\n🎯 First-time Configuration Setup")
         print("=" * 40)
-        print("Always Attend can extract attendance codes from images using AI.")
-        print("Many schools send codes as screenshots in emails.")
+        print("This wizard will help you set portal URL, credentials, and browser settings.")
         
         try:
-            run_wizard = input("\\nRun configuration wizard? (Y/n): ").strip().lower()
+            run_wizard = input("Run configuration wizard? (Y/n): ").strip().lower()
             return run_wizard != 'n'
         except EOFError:
             # Non-interactive environment, skip wizard

@@ -32,6 +32,49 @@ function Write-Header {
 
 Write-Header "Always Attend - PowerShell Launcher"
 
+# Helpers: latest week detection and week prompt
+function Get-LatestWeek {
+    $latest = $null
+    if (Test-Path 'data') {
+        try {
+            Get-ChildItem -Path 'data' -Recurse -Filter '*.json' -File -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $name = $_.BaseName
+                if ($name -match '^[0-9]+$') {
+                    $n = [int]$name
+                    if (-not $latest -or $n -gt $latest) { $latest = $n }
+                }
+            }
+        } catch {}
+    }
+    return $latest
+}
+
+function Prompt-Week {
+    # Default non-interactive unless WEEK_PROMPT=1
+    if (-not [string]::IsNullOrEmpty($env:WEEK_NUMBER)) { return }
+    $latest = Get-LatestWeek
+    if ($env:WEEK_PROMPT -eq '1') {
+        Write-Host ""
+        Write-ColorText "📅 Week Selection" "Blue"
+        if ($latest) {
+            $inputWeek = Read-Host "Use week $latest? Press Enter to accept, or type another week number"
+            if ([string]::IsNullOrWhiteSpace($inputWeek)) {
+                $env:WEEK_NUMBER = "$latest"
+            } else {
+                $env:WEEK_NUMBER = $inputWeek
+            }
+        } else {
+            $inputWeek = Read-Host "Enter current week number (e.g., 1,2,3...)"
+            if (-not [string]::IsNullOrWhiteSpace($inputWeek)) {
+                $env:WEEK_NUMBER = $inputWeek
+            }
+        }
+    } else {
+        if ($latest) { $env:WEEK_NUMBER = "$latest" }
+    }
+}
+
 # Check if Python is available
 $pythonCmd = $null
 try {
@@ -156,14 +199,17 @@ while ($true) {
     switch ($choice) {
         "1" {
             Write-ColorText "🚀 Running attendance submission..." "Blue"
+            Prompt-Week
             python main.py
         }
         "2" {
             Write-ColorText "🚀 Running with browser visible..." "Blue"
+            Prompt-Week
             python main.py --headed
         }
         "3" {
             Write-ColorText "👀 Running dry run (preview only)..." "Blue"
+            Prompt-Week
             python main.py --dry-run
         }
         "4" {

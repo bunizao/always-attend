@@ -48,11 +48,9 @@ echo.
 echo Data Processing and Privacy:
 echo.
 echo • Your credentials are stored locally in encrypted format
-echo • Gmail data is processed locally on your device
-echo • If you choose AI OCR, images will be sent to external APIs (Gemini/ChatGPT)
-echo • Only attendance code images are processed by AI - no personal data
+echo • No email data is processed by this tool
 echo • All sensitive data remains secure and stored locally
-echo • No data is shared with third parties except chosen AI providers for OCR
+echo • No data is shared with third parties
 echo.
 echo ⚠️  IMPORTANT: Ensure compliance with your institution's policies
 echo.
@@ -122,43 +120,9 @@ if "%browser_choice%"=="1" (
 )
 echo.
 
-REM OCR Configuration
-echo 4. Attendance Code Processing Method
-echo.
-echo How would you like to process attendance codes from emails?
-echo 1) Local OCR (No external services, but requires additional dependencies)
-echo 2) ⭐ AI-powered OCR (⭐⭐⭐⭐⭐ Most Accurate - Send images to Gemini/ChatGPT)
-echo 3) Manual extraction (Process codes manually when needed)
-echo.
-set /p ocr_choice=Please choose (1-3): 
-
-if "%ocr_choice%"=="1" (
-    echo OCR_ENABLED=1 >> .env
-    echo OCR_METHOD=local >> .env
-    echo ⚠️  Local OCR requires additional dependencies. Install when prompted.
-) else if "%ocr_choice%"=="2" (
-    echo OCR_ENABLED=1 >> .env
-    echo OCR_METHOD=ai >> .env
-    echo.
-    echo 📋 AI Processing Privacy Notice:
-    echo • Only attendance code images will be sent to AI services
-    echo • No personal information or credentials are shared
-    echo • Images are processed temporarily and not stored by AI providers
-    echo • ⭐⭐⭐⭐⭐ Provides highest accuracy for code extraction
-    echo.
-    set /p gemini_key=Enter your Gemini API key (or press Enter to skip): 
-    if not "!gemini_key!"=="" (
-        echo GEMINI_API_KEY=!gemini_key! >> .env
-    )
-    echo.
-    set /p openai_key=Enter your OpenAI API key (or press Enter to skip): 
-    if not "!openai_key!"=="" (
-        echo OPENAI_API_KEY=!openai_key! >> .env
-    )
-) else (
-    echo OCR_ENABLED=0 >> .env
-    echo ✅ Manual processing configured
-)
+REM Step removed: Gmail/OCR not included
+echo 4. Browser Configuration (continued)
+echo Using your system Chrome/Edge by default. You can edit BROWSER/BROWSER_CHANNEL in .env later.
 echo.
 
 REM Create first-time flag
@@ -321,9 +285,53 @@ echo 🚀 Starting Always Attend...
 echo The program will automatically determine what actions are needed
 echo.
 
-REM Simply run the main program
+REM ---- Week selection: detect latest and prompt user ----
+set "LATEST_WEEK="
+if exist "data" (
+  for /r "data" %%F in (*.json) do (
+    set "_name=%%~nF"
+    call :_check_week !_name!
+  )
+)
+
+REM Week selection: default non-interactive. Set WEEK_PROMPT=1 to prompt.
+if not defined WEEK_NUMBER (
+  if /I "%WEEK_PROMPT%"=="1" (
+    echo 📅 Week Selection
+    if defined LATEST_WEEK (
+      set /p INPUT_WEEK=Use week %LATEST_WEEK%? Press Enter to accept, or type another week number: 
+      if defined INPUT_WEEK (
+        set "WEEK_NUMBER=%INPUT_WEEK%"
+      ) else (
+        set "WEEK_NUMBER=%LATEST_WEEK%"
+      )
+    ) else (
+      set /p INPUT_WEEK=Enter current week number (e.g., 1,2,3...): 
+      if defined INPUT_WEEK set "WEEK_NUMBER=%INPUT_WEEK%"
+    )
+  ) else (
+    if defined LATEST_WEEK set "WEEK_NUMBER=%LATEST_WEEK%"
+  )
+)
+
+REM Run the main program
 python main.py
 
 echo.
 echo 👋 Thank you for using Always Attend!
 echo For issues, visit: https://github.com/bunizao/always-attend/issues
+goto :eof
+
+REM Helper: check if argument is numeric and keep max as LATEST_WEEK
+:_check_week
+set "_wk=%~1"
+echo.%_wk%| findstr /r "^[0-9][0-9]*$" >nul
+if errorlevel 1 goto :eof
+if not defined LATEST_WEEK (
+  set "LATEST_WEEK=%_wk%"
+) else (
+  set /a _a=%_wk% 1>nul 2>nul
+  set /a _b=%LATEST_WEEK% 1>nul 2>nul
+  if %_a% GTR %_b% set "LATEST_WEEK=%_wk%"
+)
+goto :eof
