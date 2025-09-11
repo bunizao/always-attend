@@ -22,6 +22,42 @@
 
 #### 此文档由 [**ChatGPT 5**](https://chatgpt.com) 翻译，原始内容用英语编写，仅供参考。 
 
+## 🚀 一键启动（推荐）
+
+双击即可运行，包含首次引导设置：
+
+- macOS：双击 `Always-Attend.command`
+- Windows：双击 `Always-Attend.bat`（或运行 `Always-Attend.ps1`）
+
+启动器会做什么：
+- 检查系统中的 Python（以及可选的 Git）
+- 首次运行创建并激活虚拟环境并安装依赖
+- 运行首次设置向导（门户 URL、账号、周次、浏览器）
+- 从 `data/*/*.json` 自动检测最新周并设置 `WEEK_NUMBER`
+  - 若希望每次运行都提示周次，设置 `WEEK_PROMPT=1`
+- 简化执行：直接调用 `python main.py`，无复杂菜单
+
+首次设置功能：
+- ASCII 艺术横幅
+- 首次运行显示隐私政策并征得同意
+- 学校快速配置（包含 Monash Malaysia 选项）
+- 邮箱与密码输入
+- 周次配置
+
+注意：
+- Git 可选；未安装将跳过更新步骤
+- 需要已安装 Chrome/Edge（默认使用系统浏览器）
+
+快速开始：
+```bash
+# macOS：双击 Always-Attend.command
+# Windows：双击 Always-Attend.bat
+
+# 或直接运行
+python main.py
+```
+更多运行细节与可选参数见下方“快速开始（Quick Start）”章节。
+
 ## 前置条件
 
 - Python 3.11 或更高版本

@@ -26,44 +26,50 @@
 
 
 
-## 🚀 Easy Launch (Recommended)
+## 🚀 Easy Launch
 
-Double‑click to run with our enhanced first‑time setup:
+Double‑click to run with the enhanced first‑time setup:
 
-• macOS: `Always-Attend.command`
-• Windows: `Always-Attend.bat` or `Always-Attend.ps1`
+- macOS: double‑click `Always-Attend.command`
+- Windows: double‑click `Always-Attend.bat` (or run `Always-Attend.ps1`)
 
 What the launchers do:
-- Check Python (and Git if available) on your system
-- Create/activate a virtualenv and install dependencies (first run)
-- Run first‑time setup wizard (portal URL, credentials, week, browser)
-- Auto‑detect latest week from `data/*/*.json` and set `WEEK_NUMBER`
-  - To prompt every run, set `WEEK_PROMPT=1` before launching
+- Check for Python (and Git if available)
+- Create/activate a virtualenv and install dependencies on first run
+- Run a first‑time setup wizard (portal URL, credentials, week, browser)
+- Auto‑detect the latest week from `data/*/*.json` and set `WEEK_NUMBER`
+  - To prompt every run, set `WEEK_PROMPT=1`
+- Simplified execution: calls `python main.py` with no complex menus
+
+First‑time setup features:
+- ASCII art banner
+- Privacy policy display with consent on first run
+- University configuration, including a quick Monash Malaysia option
+- Email and password input
+- Week number configuration
 
 Notes:
-- Git is optional; if not installed, updates will be skipped
-- Chrome/Edge must be installed (system browser is used by default)
+- Git is optional; if not installed, update steps are skipped
+- Chrome/Edge must be installed (uses your system browser by default)
 
-5) Quick Start - Use the Enhanced Launchers (Recommended)
+Quick start:
 ```bash
-# macOS: Double-click Always-Attend.command
-# Windows: Double-click Always-Attend.bat
+# macOS: Double‑click Always-Attend.command
+# Windows: Double‑click Always-Attend.bat
 
-# Or run directly:
+# Or run directly
 python main.py
 ```
-What happens when you run this:
-- **First-time setup wizard** guides you through configuration if needed
-- **Privacy policy display** ensures compliance awareness
-- **Auto-configuration** for supported universities (Monash Malaysia option available)
-- Automated navigation and submission with your provided code sources
-- **Intelligent submission** with precise slot matching and optimized polling
-- If no valid session is found, a browser window opens for one‑time sign‑in and MFA verification
-- The script navigates to your attendance portal and submits your codes efficiently
-- Check the logs in the terminal for results
-- Optional flags: `--headed` to watch the browser, `--dry-run` to preview only, `--week N` to target a specific week
+When you run it:
+- A setup wizard guides configuration if needed
+- Privacy policy is shown for awareness and consent
+- Supported universities get auto‑configuration (Monash Malaysia option available)
+- Intelligent submission: precise slot matching and optimized polling
+- If no valid session is found, a browser opens for SSO and MFA; the session is saved
+- The tool navigates to your portal and submits codes; watch logs for results
+- Optional flags: `--headed`, `--dry-run`, `--week N`
 
-6) Update later
+Update later:
 ```bash
 git pull
 ```
@@ -71,27 +77,6 @@ git pull
 ---
 
 See the Environment Variables section below for a full list.
-
-## 🚀 Easy Launch (New!)
-
-For easier usage, you can now double-click to run with our enhanced first-time setup:
-
-**macOS:**
-- Double-click `Always-Attend.command` for the interactive launcher with first-time setup wizard
-
-**Windows:**
-- Double-click `Always-Attend.bat` for the enhanced launcher with setup wizard
-
-### First-Time Setup Features:
-- **Cool ASCII art banner** for enhanced visual experience
-- **Privacy policy display** with consent mechanism (required on first run)
-- **University configuration** with quick Monash Malaysia setup option
-- **Email and password input** during initial setup
-- **Week number configuration** for attendance tracking
-- Focused configuration (portal URL, credentials, week, browser)
-- macOS/Windows launchers prompt for week every run: auto-detect latest week (e.g., 7) and press Enter to accept or type a different week
-- **Simplified execution**: Just runs `python main.py` directly, letting the program auto-determine needed actions
-- **No complex menus**: Streamlined user experience focused on core functionality
 
 ## 📦 Code Sources
 
