@@ -227,8 +227,8 @@ class ConfigWizard:
                 if stripped and not stripped.startswith('#') and '=' in stripped:
                     key = stripped.split('=', 1)[0].strip()
                     if key in self.config:
-                        # Update existing key
-                        updated_lines.append(f'{key}="{self.config[key]}"\\n')
+                        # Update existing key (ensure proper newline)
+                        updated_lines.append(f'{key}="{self.config[key]}"\n')
                         keys_added.add(key)
                     else:
                         # Keep existing line
@@ -241,7 +241,7 @@ class ConfigWizard:
             if keys_added != set(self.config.keys()):
                 for key, value in self.config.items():
                     if key not in keys_added:
-                        updated_lines.append(f'{key}="{value}"\\n')
+                        updated_lines.append(f'{key}="{value}"\n')
                         
             # Write back to file
             with open(self.env_file, 'w') as f:
@@ -254,6 +254,9 @@ class ConfigWizard:
     @staticmethod
     def should_run_wizard() -> bool:
         """Check if the wizard should run (first time setup)"""
+        # If launchers have already completed first-time setup, skip
+        if os.path.exists(".first_time_setup_complete"):
+            return False
         # Check if .env exists and has some configuration
         if os.path.exists(".env"):
             try:
