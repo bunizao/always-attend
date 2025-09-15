@@ -49,6 +49,48 @@ def _is_storage_state_effective(path: str) -> bool:
     return is_storage_state_effective(path)
 
 
+def _compute_raw_url_for_path(rel_path: str) -> Optional[str]:
+    """Compute a GitHub raw URL for a repository-relative file path.
+
+    Precedence:
+    - If `CODES_BASE_URL` is set, join it with `rel_path`.
+    - Else, attempt to derive from `git` remote `origin` and current branch.
+    """
+    try:
+        # 1) Explicit base URL via env
+        base = os.getenv("CODES_BASE_URL", "").strip()
+        if base:
+            rel = rel_path.replace(os.sep, "/").lstrip("/")
+            return base.rstrip("/") + "/" + rel
+
+        # 2) Derive from git remote
+        import subprocess
+        remote = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+        if remote.returncode != 0:
+            return None
+        url = (remote.stdout or "").strip()
+        owner_repo = ""
+        if url.startswith("git@github.com:"):
+            owner_repo = url.split(":", 1)[1]
+        elif url.startswith("https://github.com/"):
+            owner_repo = url.split("https://github.com/", 1)[1]
+        owner_repo = owner_repo.rstrip("/")
+        if owner_repo.endswith(".git"):
+            owner_repo = owner_repo[:-4]
+        if not owner_repo or "/" not in owner_repo:
+            return None
+
+        branch_proc = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+        branch = (branch_proc.stdout or "").strip() or "main"
+        if branch.lower() == "head":
+            branch = "main"
+
+        rel = rel_path.replace(os.sep, "/").lstrip("/")
+        return f"https://raw.githubusercontent.com/{owner_repo}/{branch}/{rel}"
+    except Exception:
+        return None
+
+
 async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
     """
     Navigates to the attendance info page and scrapes enrolled course codes.
@@ -619,11 +661,25 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                         codes = parse_codes(course, wk)
                         if not codes:
                             return
+                        # Preview items (no confirmation required)
+                        logger.info("The following items will be processed:")
+                        for entry in codes:
+                            slot_label = entry.get('slot', 'Unknown')
+                            code = entry.get('code', 'Missing')
+                            logger.info(f"{slot_label}, code {code}")
+
+                        # Show local JSON path and raw URL if applicable
+                        course_clean = ''.join(ch for ch in course if ch.isalnum())
+                        week_clean = ''.join(ch for ch in str(wk) if ch.isdigit())
+                        rel_path = os.path.join('data', course_clean, f'{week_clean}.json')
+                        if os.path.exists(rel_path):
+                            logger.info(f"Generated codes JSON: {rel_path}")
+                            raw_url = _compute_raw_url_for_path(rel_path)
+                            if raw_url:
+                                logger.info(f"Raw URL: {raw_url}")
                         courses_processed.append(course)
                         if dry_run:
                             logger.info(f"[DRY RUN] Would submit {len(codes)} codes for {course} week {wk}")
-                            for entry in codes:
-                                logger.info(f"  {entry.get('slot', 'Unknown')}: {entry.get('code', 'Missing')}")
                             return
                         # Use a dedicated page for this course
                         p = await context.new_page()
