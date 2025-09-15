@@ -22,6 +22,37 @@
 
 #### 此文档由 [**ChatGPT 5**](https://chatgpt.com) 翻译，原始内容用英语编写，仅供参考。 
 
+## 📥 如何下载本项目
+
+任选一种方式把项目文件夹下载到电脑：
+
+### 方式一：使用 Git（推荐）
+- 安装 Git：https://git-scm.com/downloads
+- macOS / Linux（终端）：
+```bash
+git clone https://github.com/bunizao/always-attend.git
+cd always-attend
+```
+- Windows（PowerShell 或 命令提示符）：
+```bat
+git clone https://github.com/bunizao/always-attend.git
+cd always-attend
+```
+
+### 方式二：下载 ZIP（不需要 Git）
+- 打开项目主页：https://github.com/bunizao/always-attend
+- 点击绿色的“Code”按钮 → “Download ZIP”
+- 或者直接下载 ZIP 链接：https://github.com/bunizao/always-attend/archive/refs/heads/main.zip
+- 解压 ZIP：
+  - Windows：右键 ZIP → “全部解压...”
+  - macOS：双击 ZIP 自动解压
+- 打开解压后的 `always-attend` 文件夹
+
+### 下载完成后如何运行
+- macOS：双击 `Always-Attend.command`
+- Windows：双击 `Always-Attend.bat`，或右键 `Always-Attend.ps1` → 以 PowerShell 运行
+- 首次运行会自动进入引导设置
+
 ## 🚀 一键启动（推荐）
 
 双击即可运行，包含首次引导设置：

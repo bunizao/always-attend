@@ -26,6 +26,37 @@
 
 
 
+## 📥 Download This Project
+
+Choose one method to get the folder onto your computer:
+
+### Option 1 — Git (recommended)
+- Install Git: https://git-scm.com/downloads
+- macOS/Linux:
+```bash
+git clone https://github.com/bunizao/always-attend.git
+cd always-attend
+```
+- Windows (PowerShell or Command Prompt):
+```bat
+git clone https://github.com/bunizao/always-attend.git
+cd always-attend
+```
+
+### Option 2 — Download ZIP (no Git needed)
+- Open the project page: https://github.com/bunizao/always-attend
+- Click the green "Code" button → "Download ZIP"
+- Or direct ZIP link: https://github.com/bunizao/always-attend/archive/refs/heads/main.zip
+- Extract the ZIP:
+  - Windows: right‑click the ZIP → "Extract All..."
+  - macOS: double‑click the ZIP to extract
+- Open the extracted `always-attend` folder
+
+### After download
+- macOS: double‑click `Always-Attend.command`
+- Windows: double‑click `Always-Attend.bat` or right‑click `Always-Attend.ps1` → Run with PowerShell
+- The first run will guide setup automatically
+
 ## 🚀 Easy Launch
 
 Double‑click to run with the enhanced first‑time setup:
