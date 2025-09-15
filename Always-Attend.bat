@@ -309,6 +309,24 @@ if not exist ".first_time_setup_complete" (
     call :first_time_setup
 )
 
+REM Ensure language preference is set to avoid repeated prompts
+REM If LANGUAGE_PREFERENCE not in .env, detect from system UI culture and save
+for /f "delims=" %%A in ('findstr /B /C:"LANGUAGE_PREFERENCE=" .env ^| find /c /v ""') do set "_has_lang=%%A"
+if not defined _has_lang (
+    for /f "usebackq delims=" %%L in (`powershell -NoProfile -Command "[System.Globalization.CultureInfo]::CurrentUICulture.Name"`) do set "UILANG=%%L"
+    set "LANGUAGE_PREFERENCE=en"
+    echo.%UILANG% | findstr /I "^zh" >nul && set "LANGUAGE_PREFERENCE=zh_CN"
+    >> .env echo LANGUAGE_PREFERENCE="%LANGUAGE_PREFERENCE%"
+)
+REM Also set in current process env
+if not defined LANGUAGE_PREFERENCE (
+    if not "%LANGUAGE_PREFERENCE%"=="" (
+        set "LANGUAGE_PREFERENCE=%LANGUAGE_PREFERENCE%"
+    ) else (
+        set "LANGUAGE_PREFERENCE=en"
+    )
+)
+
 REM Main execution - simplified approach
 echo.
 echo 🚀 Starting Always Attend...
@@ -350,6 +368,11 @@ python main.py
 echo.
 echo 👋 Thank you for using Always Attend!
 echo For issues, visit: https://github.com/bunizao/always-attend/issues
+
+REM Keep window open when double-clicked (default). Pass "--nopause" to skip.
+if /I "%~1"=="--nopause" goto :eof
+echo.
+pause
 goto :eof
 
 REM Helper: check if argument is numeric and keep max as LATEST_WEEK

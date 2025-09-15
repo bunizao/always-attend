@@ -32,6 +32,38 @@ function Write-Header {
 
 Write-Header "Always Attend - PowerShell Launcher"
 
+function Show-PrivacyPolicy {
+    Write-Host ""
+    Write-ColorText "📋 Privacy Policy and Terms of Use" "Yellow"
+    Write-ColorText "====================================================" "Blue"
+    Write-Host ""
+    Write-ColorText "Disclaimer and Legal Notice:" "Green"
+    Write-Host ""
+    Write-Host "• This project is for educational and personal use only."
+    Write-Host "• Use it responsibly and follow your institution's policies."
+    Write-Host "• This project is not affiliated with any university or service provider."
+    Write-Host "• You are solely responsible for any use of this tool and consequences."
+    Write-Host "• The authors provide no guarantee that it will work for your setup."
+    Write-Host ""
+    Write-ColorText "Data Processing and Privacy:" "Green"
+    Write-Host ""
+    Write-Host "• Your credentials are stored locally in encrypted format"
+    Write-Host "• No email data is processed by this tool"
+    Write-Host "• All sensitive data remains secure and stored locally"
+    Write-Host "• No data is shared with third parties"
+    Write-Host ""
+    Write-ColorText "⚠️  IMPORTANT: Ensure compliance with your institution's policies" "Red"
+    Write-Host ""
+    Read-Host "Press Enter to accept and continue, or Ctrl+C to exit"
+    # Create first-time flag so this notice is shown only once across launchers
+    try { New-Item -Path ".first_time_setup_complete" -ItemType File -Force | Out-Null } catch {}
+}
+
+# Show privacy policy on first run
+if (-not (Test-Path ".first_time_setup_complete")) {
+    Show-PrivacyPolicy
+}
+
 # Check or install Git (optional for updates)
 try {
     git --version 2>&1 | Out-Null
@@ -215,6 +247,30 @@ if (-not (Test-Path ".env")) {
         exit 1
     }
 }
+
+# Ensure language preference is set to avoid repeated prompts
+try {
+    $hasLang = $false
+    if (Test-Path ".env") {
+        $hasLang = Select-String -Path ".env" -Pattern "^LANGUAGE_PREFERENCE=" -Quiet -ErrorAction SilentlyContinue
+    }
+    if (-not $hasLang) {
+        $ui = [System.Globalization.CultureInfo]::CurrentUICulture.Name
+        $langPref = 'en'
+        if ($ui -match '^zh') { $langPref = 'zh_CN' }
+        Add-Content -Path ".env" -Value ("LANGUAGE_PREFERENCE=\"{0}\"" -f $langPref)
+        $env:LANGUAGE_PREFERENCE = $langPref
+    } elseif (-not $env:LANGUAGE_PREFERENCE) {
+        # Attempt to read from .env and set process env var for this run
+        try {
+            $line = (Get-Content -Path ".env" | Where-Object { $_ -match '^LANGUAGE_PREFERENCE=' } | Select-Object -First 1)
+            if ($line) {
+                $val = ($line -split '=',2)[1].Trim('"').Trim("'")
+                if ($val) { $env:LANGUAGE_PREFERENCE = $val }
+            }
+        } catch {}
+    }
+} catch {}
 
 # Main menu loop
 while ($true) {

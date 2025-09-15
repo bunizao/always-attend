@@ -361,6 +361,19 @@ if [ ! -f ".first_time_setup_complete" ]; then
     first_time_setup
 fi
 
+# Ensure LANGUAGE_PREFERENCE is set in .env to avoid repeated prompts
+if [ -f ".env" ]; then
+  if ! grep -q '^LANGUAGE_PREFERENCE=' .env 2>/dev/null; then
+    # Map CURRENT_LANG to our language codes: zh_CN, zh_TW, en
+    case "$CURRENT_LANG" in
+      zh_CN|zh_TW) LANG_PREF="$CURRENT_LANG" ;;
+      *) LANG_PREF="en" ;;
+    esac
+    echo "LANGUAGE_PREFERENCE=\"$LANG_PREF\"" >> .env
+    export LANGUAGE_PREFERENCE="$LANG_PREF"
+  fi
+fi
+
 # Main execution - simplified approach
 echo
 echo -e "${BLUE}🚀 $(t "starting_program" "Starting Always Attend...")${NC}"
