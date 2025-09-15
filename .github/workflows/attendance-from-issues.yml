@@ -522,29 +522,7 @@ jobs:
                       week = w
                   gemini_used = True
 
-          # Ask for a single text reply confirmation (reply with 'confirm')
-          confirmed = False
-          cb = os.environ.get('COMMENT_BODY') or ''
-          if re.search(r"\b(confirm)\b", cb, flags=re.I):
-              confirmed = True
-          if pairs and not confirmed:
-              lines = [
-                  "## ✅ Single Confirmation",
-                  "**Please reply to this issue with `confirm` to proceed.**",
-                  "",
-                  "The following items will be processed:",
-              ]
-              for slot, code in pairs:
-                  # Keep the summary concise; no dates in the confirmation list
-                  lines.append(f"- {slot}, code {code}")
-              lines.append("")
-              lines.append("> Reply with a single line `confirm` only. No extra text. The workflow will then generate and commit the JSON.")
-              comment = "\n".join(lines)
-              subprocess.run([
-                  'gh','api', f'repos/{repo}/issues/{issue_no}/comments',
-                  '--method','POST','-f',f'body={comment}'
-              ], check=False)
-              sys.exit(0)
+          # Skip interactive confirmation; proceed automatically when pairs are present
 
           # If still no pairs, ask user to provide proper text
           if not pairs:
@@ -627,6 +605,7 @@ jobs:
               direct_push_ok = False
 
           pr_url = None
+          used_branch = target_branch
           if not direct_push_ok:
               # Create a branch and open a PR
               safe_course = re.sub(r'[^A-Za-z0-9]+','', course).upper()
@@ -644,31 +623,22 @@ jobs:
                       '--head', branch_name
                   ], check=True, capture_output=True, text=True)
                   pr_url = pr_create.stdout.strip().splitlines()[-1]
+                  used_branch = branch_name
               except subprocess.CalledProcessError as e:
                   print('Failed to create PR:', e)
 
-          # Comment success with raw URL hint
-          raw = f"https://raw.githubusercontent.com/{repo}/{target_branch}/{filename}"
-          ok = (
-            f"Generated codes JSON: `{filename}`\n\n"
-            f"Raw URL: {raw}\n\n"
-            f"The script can use this URL directly by setting `CODES_URL={raw}`."
-          )
-          if 'task_items_selected' in locals() and task_items_selected:
-              ok += ("\n\nSource: checked GitHub task list items. You can uncheck items to exclude them and re-run by editing the issue.")
-              # Show committed items for clarity (deduplicated)
-              ok += "\nCommitted items:"
-              seen = set()
-              for it in task_items_selected:
-                  key = (it['slot'].strip(), (it.get('date') or ''), it['code'].strip().upper())
-                  if key in seen:
-                      continue
-                  seen.add(key)
-                  if it.get('date'):
-                      ok += f"\n- [x] {it['slot']}, {it['date']}, code {it['code']}"
-                  else:
-                      ok += f"\n- [x] {it['slot']}, code {it['code']}"
-          
+          # Comment success with item listing and accurate raw URL
+          raw = f"https://raw.githubusercontent.com/{repo}/{used_branch}/{filename}"
+          lines = []
+          lines.append("The following items will be processed:")
+          for item in entries:
+              lines.append(f"{item['slot']}, code {item['code']}")
+          lines.append("")
+          lines.append(f"Generated codes JSON: {filename}")
+          lines.append("")
+          lines.append(f"Raw URL: {raw}")
+          ok = "\n".join(lines)
+
           
           if pr_url:
               ok += f"\n\nDirect push was blocked; opened PR: {pr_url}"
