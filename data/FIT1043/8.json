@@ -1,0 +1,38 @@
+[
+  {
+    "slot": "Workshop 01",
+    "code": "600PM"
+  },
+  {
+    "slot": "Workshop 02",
+    "code": "1200PM"
+  },
+  {
+    "slot": "Lab 01",
+    "code": "400PM"
+  },
+  {
+    "slot": "Lab 02",
+    "code": "800AM"
+  },
+  {
+    "slot": "Lab 03",
+    "code": "1000AM"
+  },
+  {
+    "slot": "Lab 07",
+    "code": "400PM"
+  },
+  {
+    "slot": "Lab 04",
+    "code": "800AM"
+  },
+  {
+    "slot": "Lab 05",
+    "code": "1000AM"
+  },
+  {
+    "slot": "Lab 06",
+    "code": "800AM"
+  }
+]
