@@ -217,3 +217,4 @@ CLAUDE.md
 /.cache_cli_test
 /.git.bak_1757433010
 attendance_stats.json
+.first_time_setup_complete
