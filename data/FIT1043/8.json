@@ -1,38 +1,18 @@
 [
   {
     "slot": "Workshop 01",
-    "code": "600PM"
+    "code": "WQKQX"
   },
   {
     "slot": "Workshop 02",
-    "code": "1200PM"
+    "code": "7ZC9X"
   },
   {
-    "slot": "Lab 01",
-    "code": "400PM"
+    "slot": "Workshop 01",
+    "code": "WQKQX"
   },
   {
-    "slot": "Lab 02",
-    "code": "800AM"
-  },
-  {
-    "slot": "Lab 03",
-    "code": "1000AM"
-  },
-  {
-    "slot": "Lab 07",
-    "code": "400PM"
-  },
-  {
-    "slot": "Lab 04",
-    "code": "800AM"
-  },
-  {
-    "slot": "Lab 05",
-    "code": "1000AM"
-  },
-  {
-    "slot": "Lab 06",
-    "code": "800AM"
+    "slot": "Workshop 02",
+    "code": "7ZC9X"
   }
 ]
