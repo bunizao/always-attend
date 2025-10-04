@@ -9,7 +9,7 @@ import re
 
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
 
-from utils.logger import logger
+from utils.logger import logger, step, progress, success, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from core.stats import StatsManager
@@ -96,15 +96,16 @@ async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
     Navigates to the attendance info page and scrapes enrolled course codes.
     """
     attendance_info_url = f"{base_url}/student/AttendanceInfo.aspx"
-    logger.info(f"[STEP] Navigating to {attendance_info_url} to find courses...")
+    step("Fetching course list...")
+    debug_detail(f"Navigating to {attendance_info_url}")
     await page.goto(attendance_info_url, timeout=30000)
 
-    logger.info("[STEP] Scraping page for enrolled courses...")
+    progress("Parsing enrolled courses...")
     try:
         all_text = await page.content()
         course_codes = re.findall(r'\b([A-Z]{3}\d{4})\b', all_text)
         unique_codes = sorted(list(set(course_codes)))
-        logger.info(f"Found {len(unique_codes)} enrolled courses: {unique_codes}")
+        success(f"Found {len(unique_codes)} courses: {', '.join(unique_codes)}")
         return unique_codes
     except Exception as e:
         logger.warning(f"Could not scrape enrolled courses: {e}")
@@ -393,13 +394,13 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
             if suffix:
                 slot_env.append({"slot": f"Lab {suffix}", "code": val.strip()})
     if slot_env:
-        logger.info("Using per-slot env overrides")
+        debug_detail("Using per-slot env overrides")
         return slot_env
 
     # 2) CODES_URL
     codes_url = os.getenv("CODES_URL", "").strip()
     if codes_url:
-        logger.info(f"Loading codes from URL: {codes_url}")
+        debug_detail(f"Loading codes from URL: {codes_url}")
         # Support file:// scheme directly
         try:
             from urllib.parse import urlparse
@@ -433,7 +434,7 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
     # 3) CODES_FILE
     codes_file = os.getenv("CODES_FILE", "").strip()
     if codes_file and os.path.exists(codes_file):
-        logger.info(f"Loading codes from file: {codes_file}")
+        debug_detail(f"Loading codes from file: {codes_file}")
         try:
             with open(codes_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -443,7 +444,7 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
     # 4) CODES inline
     codes_env = os.getenv("CODES", "").strip()
     if codes_env:
-        logger.info("Using inline CODES from environment")
+        debug_detail("Using inline CODES from environment")
         parsed = []
         for pair in codes_env.split(";"):
             if ":" in pair:
@@ -457,7 +458,7 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
         week_clean = ''.join(ch for ch in str(week_number) if ch.isdigit())
         data_path = os.path.join('data', course_clean, f'{week_clean}.json')
         if os.path.exists(data_path):
-            logger.info(f"Loading codes from local data: {data_path}")
+            debug_detail(f"Loading codes from local data: {data_path}")
             try:
                 with open(data_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
@@ -532,6 +533,7 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
             return False, "Could not find submit button"
         
         # Wait for response and check result
+        progress("Waiting for server response...")
         await asyncio.sleep(2)
         
         # Check for success/error messages
@@ -583,7 +585,18 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     
     base_url = to_base(portal_url)
     browser_name = os.getenv("BROWSER", "chromium")
-    channel = os.getenv("BROWSER_CHANNEL", "chrome") if browser_name == "chromium" else None
+    # Default to system browsers to avoid Chromium download
+    channel = os.getenv("BROWSER_CHANNEL")
+    if not channel and browser_name == "chromium":
+        # Try system browsers first: Chrome, Edge, then fallback to Chromium
+        import platform
+        system = platform.system().lower()
+        if system == "darwin":  # macOS
+            channel = "chrome"  # Try Chrome first, then default Chromium
+        elif system == "windows":
+            channel = "msedge"  # Try Edge first on Windows
+        elif system == "linux":
+            channel = "chrome"  # Try Chrome first on Linux
     headless_env = os.getenv("HEADLESS", "1")
     headed = (headless_env in ("0", "false", "False"))
     storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
@@ -598,16 +611,24 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
         else:
             browser_type = p.chromium
         
-        logger.info(f"Launching browser: {browser_name} channel={channel} headless={not headed}")
-        
+        if channel:
+            step(f"Launching system browser ({channel})...")
+        else:
+            step("Launching browser...")
+        debug_detail(f"Browser: {browser_name}, channel: {channel}, headless: {not headed}")
+
         launch_kwargs = {"headless": not headed}
         if channel and browser_name == "chromium":
             launch_kwargs["channel"] = channel
-            
+
         try:
             browser = await browser_type.launch(**launch_kwargs)
+            if channel:
+                success(f"Successfully launched system browser ({channel})")
         except Exception as e:
-            logger.warning(f"Failed to launch with channel '{channel}': {e}. Falling back.")
+            if channel:
+                logger.warning(f"Failed to launch system browser ({channel}): {e}")
+                progress("Falling back to default browser...")
             launch_kwargs.pop("channel", None)
             browser = await browser_type.launch(**launch_kwargs)
         
@@ -615,7 +636,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
         context_kwargs = {}
         if os.path.exists(storage_state) and _is_storage_state_effective(storage_state):
             context_kwargs["storage_state"] = storage_state
-            logger.info("Loading saved session state")
+            progress("Loading saved session state...")
         
         context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
@@ -653,7 +674,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                 nonlocal courses_processed, codes_submitted, errors
                 async with sem:
                     try:
-                        logger.info(f"[STEP] Processing course: {course}")
+                        step(f"Processing course: {course}")
                         wk = os.getenv("WEEK_NUMBER") or find_latest_week(course)
                         if not wk:
                             logger.warning(f"No week number determined for {course}")
@@ -686,6 +707,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                         submitted = 0
                         try:
                             # Pre-check any entry exists (fast)
+                            progress(f"Checking if {course} has attendance entries...")
                             if not await open_entry_for_course(p, base_url, course):
                                 logger.warning(f"No entry page found for {course}; skipping this course")
                                 await p.close()
@@ -704,11 +726,13 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                                 if 'pass' in slot_label.lower():
                                     continue
                                 try:
+                                    progress(f"Opening {course} {slot_label}...")
                                     opened, used_anchor = await open_entry_for_course_slot(p, base_url, course, slot_label)
                                     if not opened:
                                         # fallback to generic open
                                         opened = await open_entry_for_course(p, base_url, course)
                                         used_anchor = used_anchor or None
+                                    progress(f"Submitting code for {course} {slot_label}...")
                                     ok, _ = await submit_code_on_entry(p, code)
                                     # navigate back and verify via tick icon
                                     try:

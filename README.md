@@ -166,7 +166,7 @@ main.py
 | Argument | Type | Description | Example |
 | --- | --- | --- | --- |
 | `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
-| `--channel` | string | System Chromium channel | `--channel chrome` |
+| `--channel` | string | System browser channel (e.g., chrome, msedge) | `--channel chrome` |
 | `--headed` | flag | Show browser UI (same as `HEADLESS=0`) | `--headed` |
 | `--dry-run` | flag | Print parsed codes without submitting | `--dry-run` |
 | `--week` | int | Submit codes for week number N | `--week 4` |
@@ -179,7 +179,7 @@ login.py
 | --- | --- | --- | --- |
 | `--portal` | string URL | Attendance portal URL (overrides `PORTAL_URL`) | `--portal https://attendance.example.edu/student/Default.aspx` |
 | `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
-| `--channel` | string | System Chromium channel | `--channel chrome-beta` |
+| `--channel` | string | System browser channel (e.g., chrome, msedge) | `--channel chrome-beta` |
 | `--headed` | flag | Show browser UI (recommended for first login) | `--headed` |
 | `--storage-state` | string path | Path to save `storage_state.json` | `--storage-state storage_state.json` |
 | `--user-data-dir` | string path | Use a persistent browser profile directory | `--user-data-dir ~/.always-attend-profile` |
@@ -191,7 +191,7 @@ submit.py
 | Argument | Type | Description | Example |
 | --- | --- | --- | --- |
 | `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
-| `--channel` | string | System Chromium channel | `--channel msedge` |
+| `--channel` | string | System browser channel (e.g., chrome, msedge) | `--channel msedge` |
 | `--headed` | flag | Show browser UI | `--headed` |
 | `--dry-run` | flag | Print parsed codes without submitting | `--dry-run` |
 | `--week` | int | Submit codes for week number N | `--week 6` |

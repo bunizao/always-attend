@@ -23,7 +23,7 @@ class ColorFormatter(logging.Formatter):
         super().__init__(*args, **kwargs)
         self.formatters = {
             logging.DEBUG: self._colorize(f"%(asctime)s [%(levelname)s] %(message)s", _C["DIM"]),
-            logging.INFO: self._colorize(f"%(asctime)s [%(levelname)s] %(message)s", _C["DIM"]),
+            logging.INFO: "%(message)s",  # Simplified INFO format
             logging.WARNING: self._colorize(f"%(asctime)s [%(levelname)s] %(message)s", _C["YELLOW"]),
             logging.ERROR: self._colorize(f"%(asctime)s [%(levelname)s] %(message)s", _C["RED"]),
             logging.CRITICAL: self._colorize(f"%(asctime)s [%(levelname)s] %(message)s", _C["RED"] + _C["BOLD"]),
@@ -38,13 +38,34 @@ class ColorFormatter(logging.Formatter):
         # Custom prefixes for special info logs
         if record.levelname == 'INFO':
             if record.msg.startswith('[STEP]'):
-                record.msg = self._colorize(record.msg, _C["BLUE"])
+                record.msg = self._colorize(record.msg, _C["BLUE"] + _C["BOLD"])
             elif record.msg.startswith('[OK]'):
-                record.msg = self._colorize(record.msg, _C["GREEN"])
-        
+                record.msg = self._colorize(record.msg, _C["GREEN"] + _C["BOLD"])
+            elif record.msg.startswith('[PROGRESS]'):
+                record.msg = self._colorize(record.msg, _C["YELLOW"])
+            elif record.msg.startswith('[DRY RUN]'):
+                record.msg = self._colorize(record.msg, _C["BLUE"])
+
         log_fmt = self.formatters.get(record.levelno, self._style._fmt)
         formatter = logging.Formatter(log_fmt, datefmt="%H:%M:%S")
         return formatter.format(record)
+
+# --- Helper Functions ---
+def step(message: str):
+    """Log a major step in the process"""
+    logger.info(f"[STEP] {message}")
+
+def progress(message: str):
+    """Log progress updates during long operations"""
+    logger.info(f"[PROGRESS] {message}")
+
+def success(message: str):
+    """Log successful completion"""
+    logger.info(f"[OK] {message}")
+
+def debug_detail(message: str):
+    """Log detailed debug information"""
+    logger.debug(message)
 
 # --- Logger Setup ---
 logger = logging.getLogger(__name__)
