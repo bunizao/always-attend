@@ -3,8 +3,8 @@ import json
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Set
-from urllib.parse import urlparse, urlunparse
+from typing import Dict, List, Optional, Tuple, Set, Any
+from urllib.parse import urlparse, urlunparse, urljoin
 import argparse
 import re
 
@@ -158,10 +158,13 @@ async def _collect_day_anchors(page: Page) -> List[str]:
 @dataclass
 class EntryCandidate:
     anchor: Optional[str]
-    href: str
+    href: Optional[str]
     raw_label: str
     norm: str
     tokens: Set[str]
+    display_label: str
+    has_link: bool
+    is_completed: bool
 
 
 def _normalize_label(text: str) -> str:
@@ -174,6 +177,11 @@ def _normalize_label(text: str) -> str:
     s = s.replace("–", " ")
     s = s.replace("-", " ")
     s = s.replace(":", "")
+    s = re.sub(r"\b\d{1,2}\s*\d{2}\b", "", s)
+    s = re.sub(r"\b\d{1,2}(?:am|pm)\b", "", s)
+    s = re.sub(r"\b(?:mon|tue|wed|thu|fri|sat|sun)\w*\b", "", s)
+    s = re.sub(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\b", "", s)
+    s = re.sub(r"\b(?:am|pm)\b", "", s)
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\b(\d)\b", lambda m: f"{int(m.group(1)):02d}", s)
     s = re.sub(r"\s+", " ", s)
@@ -237,19 +245,37 @@ async def collect_course_entries(page: Page, base_url: str, course_code: str) ->
         for i in range(count):
             li = entries.nth(i)
             link = li.locator('a[href*="Entry.aspx"]').first
-            if await link.count() == 0:
-                continue
-            href = await link.get_attribute('href')
-            if not href or href in seen_hrefs:
-                continue
-            seen_hrefs.add(href)
+            has_link = await link.count() > 0
+            href = None
+            if has_link:
+                href = await link.get_attribute('href')
+                if not href or href in seen_hrefs:
+                    continue
+                seen_hrefs.add(href)
             try:
                 raw_label = await li.inner_text()
             except Exception:
                 raw_label = ""
             norm = _normalize_label(raw_label)
             tokens = _tokenize_label(norm)
-            candidates.append(EntryCandidate(anchor=anchor, href=href, raw_label=raw_label, norm=norm, tokens=tokens))
+            display_label = ' '.join(raw_label.split()) or norm or "Unknown slot"
+            try:
+                completed = await li.locator('img[src*="tick"]').count() > 0
+            except Exception:
+                completed = False
+
+            candidates.append(
+                EntryCandidate(
+                    anchor=anchor,
+                    href=href,
+                    raw_label=raw_label,
+                    norm=norm,
+                    tokens=tokens,
+                    display_label=display_label,
+                    has_link=has_link,
+                    is_completed=completed,
+                )
+            )
     return candidates
 
 
@@ -272,23 +298,35 @@ async def open_entry_candidate(page: Page, base_url: str, candidate: EntryCandid
     await ensure_units_page(page, base_url, timeout_ms)
     await _select_day_anchor(page, candidate.anchor)
 
-    locator = page.locator(f'a[href="{candidate.href}"]').first
-    if await locator.count() == 0:
-        token = candidate.href.split("Entry.aspx", 1)[-1]
-        locator = page.locator(f'a[href*="{token}"]').first
-    if await locator.count() == 0:
-        return False
+    locator = None
+    if candidate.href:
+        locator = page.locator(f'a[href="{candidate.href}"]').first
+        if await locator.count() == 0:
+            token = candidate.href.split("Entry.aspx", 1)[-1]
+            locator = page.locator(f'a[href*="{token}"]').first
 
-    try:
-        await locator.scroll_into_view_if_needed()
-        await locator.click()
+    if locator and await locator.count() > 0:
         try:
-            await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
+            await locator.scroll_into_view_if_needed()
+            await locator.click()
+            try:
+                await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
+            except Exception:
+                pass
+            if 'Entry.aspx' in (page.url or ''):
+                return True
         except Exception:
             pass
-        return 'Entry.aspx' in (page.url or '')
-    except Exception:
-        return False
+
+    if candidate.href:
+        target = urljoin(f"{base_url}/student/", candidate.href)
+        try:
+            await page.goto(target, timeout=timeout_ms)
+            return 'Entry.aspx' in (page.url or '')
+        except Exception:
+            return False
+
+    return False
 
 
 async def verify_entry_candidate(page: Page, base_url: str, candidate: EntryCandidate, timeout_ms: int = 8000) -> bool:
@@ -524,29 +562,31 @@ class SubmitWorkflow:
         self._preview_course(course, week, codes)
         await self._store_course(course)
 
-        actionable = [
-            entry for entry in codes
+        code_pool = [
+            {
+                "slot": entry.get('slot') or '',
+                "code": entry.get('code'),
+                "norm": _normalize_label(entry.get('slot') or ''),
+                "tokens": _tokenize_label(_normalize_label(entry.get('slot') or '')),
+            }
+            for entry in codes
             if entry.get('code') and 'pass' not in (entry.get('slot') or '').lower()
         ]
 
-        if not actionable:
+        if not code_pool:
             await self._record_course_result(course, submitted=0)
             return
 
         if self.config.dry_run:
-            total = max(len(actionable), 1)
-            for index, entry in enumerate(actionable, start=1):
-                slot_label = entry.get('slot') or ''
-                bar_width = 12
-                ratio = index / total
-                filled = int(ratio * bar_width)
-                bar = '█' * filled + '░' * (bar_width - filled)
-                label = slot_label or 'Unknown slot'
-                display = f"[{bar}] {index}/{total} Processing {course} – {label}"
-
-                async with spinner(display) as spin:
+            total = len(code_pool)
+            async with spinner(self._progress_display(course, "Preparing", 0, total)) as spin:
+                for index, entry in enumerate(code_pool, start=1):
+                    slot_label = entry['slot']
+                    spin.update(self._progress_display(course, slot_label, index, total))
+                    logger.info(f"[DRY RUN] {course} {slot_label}: {entry['code']}")
                     await asyncio.sleep(0.05)
-                    spin.succeed()
+                spin.update(self._progress_display(course, "Completed", total, total))
+                spin.succeed()
             await self._record_course_result(course, submitted=0)
             return
 
@@ -558,26 +598,34 @@ class SubmitWorkflow:
                 logger.warning(f"No attendance entries visible for {course}")
                 return
 
-            total = len(actionable)
+            entry_targets = [cand for cand in entries if cand.has_link and not cand.is_completed and 'pass' not in cand.norm]
+            if not entry_targets:
+                logger.warning(f"No actionable entries found for {course}")
+                return
 
-            for index, entry in enumerate(actionable, start=1):
-                slot_label = entry.get('slot') or ''
-                code = entry.get('code')
+            available_codes = code_pool.copy()
+            total = len(entry_targets)
 
-                bar_width = 12
-                ratio = index / total
-                filled = int(ratio * bar_width)
-                bar = '█' * filled + '░' * (bar_width - filled)
-                label = slot_label or 'Unknown slot'
-                display = f"[{bar}] {index}/{total} Processing {course} – {label}"
+            fail_reasons: List[str] = []
 
-                candidate = pick_candidate_for_slot(slot_label, entries)
-                async with spinner(display) as spin:
-                    if candidate is None:
-                        spin.fail("Slot not visible")
+            async with spinner(self._progress_display(course, "Preparing", 0, total)) as spin:
+                for index, candidate in enumerate(entry_targets, start=1):
+                    match = self._pick_code_for_candidate(candidate, available_codes)
+                    if match is None:
+                        display_label = candidate.display_label
+                        spin.update(self._progress_display(course, display_label, index, total))
+                        spin.note(f"{course} {display_label}: no available code", level="warning")
                         async with self._result_lock:
-                            self.errors.append(f"{course} {slot_label}: slot not visible")
+                            self.errors.append(f"{course} {display_label}: no available code")
+                        fail_reasons.append(f"{display_label}: no code")
                         continue
+
+                    code_idx, code_entry = match
+                    code_entry = available_codes.pop(code_idx)
+                    code = code_entry['code']
+                    slot_label = code_entry['slot'] or candidate.display_label
+
+                    spin.update(self._progress_display(course, slot_label, index, total))
 
                     opened = await open_entry_candidate(
                         page,
@@ -586,17 +634,19 @@ class SubmitWorkflow:
                         timeout_ms=self.config.timeout_ms,
                     )
                     if not opened:
-                        spin.fail("Entry open failed")
+                        spin.note(f"{course} {slot_label}: unable to open entry", level="warning")
                         async with self._result_lock:
                             self.errors.append(f"{course} {slot_label}: unable to open entry")
+                        fail_reasons.append(f"{slot_label}: open failed")
                         continue
 
                     ok, reason = await submit_code_on_entry(page, code)
                     await ensure_units_page(page, self.config.base_url, self.config.timeout_ms)
                     if not ok:
-                        spin.fail(reason or "Submission error")
+                        spin.note(f"{course} {slot_label}: {reason or 'submission error'}", level="warning")
                         async with self._result_lock:
                             self.errors.append(f"{course} {slot_label}: {reason or 'submission error'}")
+                        fail_reasons.append(f"{slot_label}: {reason or 'submit error'}")
                         continue
 
                     verified = await verify_entry_candidate(
@@ -606,12 +656,20 @@ class SubmitWorkflow:
                         timeout_ms=self.config.timeout_ms,
                     )
                     if verified:
-                        spin.succeed()
                         submitted += 1
+                        logger.info(f"✓ {course} {slot_label}: {code}")
                     else:
-                        spin.fail("Verification failed")
+                        spin.note(f"{course} {slot_label}: verification failed", level="warning")
                         async with self._result_lock:
                             self.errors.append(f"{course} {slot_label}: verification failed")
+                        fail_reasons.append(f"{slot_label}: verification failed")
+
+                spin.update(self._progress_display(course, "Completed", total, total))
+                if submitted:
+                    spin.succeed()
+                else:
+                    summary = fail_reasons[0] if fail_reasons else "no attempts"
+                    spin.fail(f"0/{total} codes submitted ({summary})")
         finally:
             await page.close()
             await self._record_course_result(course, submitted=submitted)
@@ -649,6 +707,37 @@ class SubmitWorkflow:
             )
         except Exception:
             pass
+
+    def _progress_display(self, course: str, slot_label: str, index: int, total: int) -> str:
+        total = max(total, 1)
+        clamped_index = max(0, min(index, total))
+        ratio = clamped_index / total
+        bar_width = 12
+        filled = int(ratio * bar_width)
+        bar = '█' * filled + '░' * (bar_width - filled)
+        label = slot_label or 'Preparing'
+        return f"[{bar}] {clamped_index}/{total} {course} – {label}"
+
+    def _candidate_label(self, candidate: EntryCandidate) -> str:
+        return candidate.display_label
+
+    def _pick_code_for_candidate(
+        self,
+        candidate: EntryCandidate,
+        codes: List[Dict[str, Any]],
+    ) -> Optional[Tuple[int, Dict[str, Any]]]:
+        best_idx = -1
+        best_score = 0.0
+        for idx, code_entry in enumerate(codes):
+            score = _score_slot_match(code_entry['norm'], code_entry['tokens'], candidate)
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+        if best_idx == -1:
+            return None if not codes else (0, codes[0])
+        if best_score < 0.25 and codes:
+            return 0, codes[0]
+        return best_idx, codes[best_idx]
 
 async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> None:
     """Main submission logic."""

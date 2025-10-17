@@ -240,6 +240,14 @@ class _Spinner:
             logger.error(f"{self.message} – {reason}")
             self._failure_logged = True
 
+    def update(self, message: str) -> None:
+        self.message = message
+
+    def note(self, message: str, *, level: str = "info") -> None:
+        _clear_current_line()
+        log_fn = getattr(logger, level, logger.info)
+        log_fn(message)
+
 
 _SPINNER_LOCK = asyncio.Lock()
 
