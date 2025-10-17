@@ -164,7 +164,7 @@ class EntryCandidate:
     tokens: Set[str]
     display_label: str
     has_link: bool
-    is_completed: bool
+    is_open: bool
 
 
 def _normalize_label(text: str) -> str:
@@ -260,9 +260,9 @@ async def collect_course_entries(page: Page, base_url: str, course_code: str) ->
             tokens = _tokenize_label(norm)
             display_label = ' '.join(raw_label.split()) or norm or "Unknown slot"
             try:
-                completed = await li.locator('img[src*="tick"]').count() > 0
+                question = await li.locator('img[src*="question"]').count() > 0
             except Exception:
-                completed = False
+                question = False
 
             candidates.append(
                 EntryCandidate(
@@ -273,7 +273,7 @@ async def collect_course_entries(page: Page, base_url: str, course_code: str) ->
                     tokens=tokens,
                     display_label=display_label,
                     has_link=has_link,
-                    is_completed=completed,
+                    is_open=question,
                 )
             )
     return candidates
@@ -333,13 +333,26 @@ async def verify_entry_candidate(page: Page, base_url: str, candidate: EntryCand
     await ensure_units_page(page, base_url, timeout_ms)
     await _select_day_anchor(page, candidate.anchor)
 
-    locator = page.locator(f'a[href="{candidate.href}"]').first
-    if await locator.count() == 0:
-        token = candidate.href.split("Entry.aspx", 1)[-1]
-        locator = page.locator(f'a[href*="{token}"]').first
-    if await locator.count() == 0:
+    li = None
+    if candidate.href:
+        locator = page.locator(f'a[href="{candidate.href}"]').first
+        if await locator.count() == 0:
+            token = candidate.href.split("Entry.aspx", 1)[-1]
+            locator = page.locator(f'a[href*="{token}"]').first
+        if await locator.count() > 0:
+            li = locator.locator("xpath=ancestor::li[1]")
+
+    if li is None:
+        search_label = candidate.display_label.strip() or candidate.norm
+        if search_label:
+            try:
+                li = page.locator('li').filter(has_text=re.compile(re.escape(search_label), re.I)).first
+            except Exception:
+                li = None
+
+    if li is None:
         return False
-    li = locator.locator("xpath=ancestor::li[1]")
+
     try:
         return await li.locator('img[src*="tick"]').count() > 0
     except Exception:
@@ -598,7 +611,7 @@ class SubmitWorkflow:
                 logger.warning(f"No attendance entries visible for {course}")
                 return
 
-            entry_targets = [cand for cand in entries if cand.has_link and not cand.is_completed and 'pass' not in cand.norm]
+            entry_targets = [cand for cand in entries if cand.has_link and cand.is_open and 'pass' not in cand.norm]
             if not entry_targets:
                 logger.warning(f"No actionable entries found for {course}")
                 return
