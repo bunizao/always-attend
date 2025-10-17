@@ -524,10 +524,27 @@ class SubmitWorkflow:
         self._preview_course(course, week, codes)
         await self._store_course(course)
 
+        actionable = [
+            entry for entry in codes
+            if entry.get('code') and 'pass' not in (entry.get('slot') or '').lower()
+        ]
+
+        if not actionable:
+            await self._record_course_result(course, submitted=0)
+            return
+
         if self.config.dry_run:
-            for entry in codes:
+            total = max(len(actionable), 1)
+            for index, entry in enumerate(actionable, start=1):
                 slot_label = entry.get('slot') or ''
-                async with spinner(f"Processing {course} – {slot_label or 'Unknown slot'}") as spin:
+                bar_width = 12
+                ratio = index / total
+                filled = int(ratio * bar_width)
+                bar = '█' * filled + '░' * (bar_width - filled)
+                label = slot_label or 'Unknown slot'
+                display = f"[{bar}] {index}/{total} Processing {course} – {label}"
+
+                async with spinner(display) as spin:
                     await asyncio.sleep(0.05)
                     spin.succeed()
             await self._record_course_result(course, submitted=0)
@@ -541,16 +558,21 @@ class SubmitWorkflow:
                 logger.warning(f"No attendance entries visible for {course}")
                 return
 
-            for entry in codes:
+            total = len(actionable)
+
+            for index, entry in enumerate(actionable, start=1):
                 slot_label = entry.get('slot') or ''
                 code = entry.get('code')
-                if not code:
-                    continue
-                if 'pass' in slot_label.lower():
-                    continue
+
+                bar_width = 12
+                ratio = index / total
+                filled = int(ratio * bar_width)
+                bar = '█' * filled + '░' * (bar_width - filled)
+                label = slot_label or 'Unknown slot'
+                display = f"[{bar}] {index}/{total} Processing {course} – {label}"
 
                 candidate = pick_candidate_for_slot(slot_label, entries)
-                async with spinner(f"Processing {course} – {slot_label or 'Unknown slot'}") as spin:
+                async with spinner(display) as spin:
                     if candidate is None:
                         spin.fail("Slot not visible")
                         async with self._result_lock:
