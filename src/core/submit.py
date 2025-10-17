@@ -1,18 +1,20 @@
 import os
 import json
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from urllib.parse import urlparse, urlunparse
 import argparse
 import re
 
-from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
+from playwright.async_api import Page
 
 from utils.logger import logger, step, progress, success, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from core.stats import StatsManager
+from core.browser_controller import BrowserConfig, BrowserController
 
 def to_base(origin_url: str) -> str:
     pu = urlparse(origin_url)
@@ -47,6 +49,22 @@ def parse_anchor(anchor: str) -> Optional[datetime]:
 
 def _is_storage_state_effective(path: str) -> bool:
     return is_storage_state_effective(path)
+
+
+@dataclass
+class SubmissionConfig:
+    portal_url: str
+    base_url: str
+    browser_name: str = "chromium"
+    channel: Optional[str] = None
+    headed: bool = False
+    storage_state: str = "storage_state.json"
+    user_data_dir: Optional[str] = None
+    dry_run: bool = False
+    target_email: Optional[str] = None
+    concurrency: int = 1
+    week_override: Optional[str] = None
+    timeout_ms: int = 60000
 
 
 def _compute_raw_url_for_path(rel_path: str) -> Optional[str]:
@@ -573,6 +591,196 @@ async def collect_day_anchors(page: Page, base: str, start_monday: Optional[date
         return []
 
 
+class SubmitWorkflow:
+    """Coordinator for attendance submission workflow."""
+
+    def __init__(self, config: SubmissionConfig):
+        self.config = config
+        self.stats = StatsManager()
+        self.courses_processed: List[str] = []
+        self.codes_submitted: Dict[str, int] = {}
+        self.errors: List[str] = []
+        self._result_lock = asyncio.Lock()
+
+    def _browser_config(self) -> BrowserConfig:
+        storage_state = None
+        if not self.config.user_data_dir:
+            candidate = self.config.storage_state
+            if candidate and os.path.exists(candidate) and _is_storage_state_effective(candidate):
+                storage_state = candidate
+                progress("Loading saved session state...")
+        return BrowserConfig(
+            name=self.config.browser_name,
+            channel=self.config.channel,
+            headed=self.config.headed,
+            storage_state=storage_state,
+            user_data_dir=self.config.user_data_dir,
+        )
+
+    def _log_launch_choice(self) -> None:
+        if self.config.channel:
+            step(f"Launching system browser ({self.config.channel})...")
+        else:
+            step("Launching browser...")
+        debug_detail(
+            f"Browser: {self.config.browser_name}, "
+            f"channel: {self.config.channel}, "
+            f"headless: {not self.config.headed}"
+        )
+
+    async def run(self) -> None:
+        self._log_launch_choice()
+        browser_cfg = self._browser_config()
+        async with BrowserController(browser_cfg) as controller:
+            page = await controller.context.new_page()
+            await page.goto(self.config.portal_url, timeout=self.config.timeout_ms)
+
+            if not await is_authenticated(page):
+                logger.error("Not authenticated. Please run login first.")
+                return
+
+            enrolled_courses = await scrape_enrolled_courses(page, self.config.base_url)
+            if not enrolled_courses:
+                logger.error("No enrolled courses found")
+                return
+
+            await page.goto(f"{self.config.base_url}/student/Units.aspx", timeout=self.config.timeout_ms)
+            await self._process_courses(controller, enrolled_courses)
+            await self._record_stats()
+
+    async def _process_courses(self, controller: BrowserController, courses: List[str]) -> None:
+        max_conc = max(1, self.config.concurrency)
+        sem = asyncio.Semaphore(max_conc)
+        tasks = [asyncio.create_task(self._process_single_course(controller, sem, course)) for course in courses]
+        await asyncio.gather(*tasks)
+
+    async def _process_single_course(
+        self,
+        controller: BrowserController,
+        sem: asyncio.Semaphore,
+        course: str,
+    ) -> None:
+        async with sem:
+            try:
+                await self._handle_course(controller, course)
+            except Exception as exc:
+                logger.debug(f"Unhandled error while processing {course}: {exc}")
+                async with self._result_lock:
+                    self.errors.append(str(exc))
+
+    async def _handle_course(self, controller: BrowserController, course: str) -> None:
+        step(f"Processing course: {course}")
+        week = self._determine_week(course)
+        if not week:
+            logger.warning(f"No week number determined for {course}")
+            return
+
+        codes = parse_codes(course, week)
+        if not codes:
+            return
+
+        self._preview_course(course, week, codes)
+        await self._store_course(course)
+
+        if self.config.dry_run:
+            logger.info(f"[DRY RUN] Would submit {len(codes)} codes for {course} week {week}")
+            await self._record_course_result(course, submitted=0)
+            return
+
+        page = await controller.context.new_page()
+        submitted = 0
+        try:
+            progress(f"Checking if {course} has attendance entries...")
+            if not await open_entry_for_course(page, self.config.base_url, course):
+                logger.warning(f"No entry page found for {course}; skipping this course")
+                return
+
+            try:
+                await page.goto(f"{self.config.base_url}/student/Units.aspx", timeout=self.config.timeout_ms)
+            except Exception:
+                pass
+
+            for entry in codes:
+                slot_label = entry.get('slot') or ''
+                code = entry.get('code')
+                if not code:
+                    continue
+                if 'pass' in slot_label.lower():
+                    continue
+
+                try:
+                    progress(f"Opening {course} {slot_label}...")
+                    opened, used_anchor = await open_entry_for_course_slot(
+                        page,
+                        self.config.base_url,
+                        course,
+                        slot_label,
+                    )
+                    if not opened:
+                        opened = await open_entry_for_course(page, self.config.base_url, course)
+                        used_anchor = used_anchor or None
+                    progress(f"Submitting code for {course} {slot_label}...")
+                    ok, _ = await submit_code_on_entry(page, code)
+                    try:
+                        await page.goto(f"{self.config.base_url}/student/Units.aspx", timeout=self.config.timeout_ms)
+                    except Exception:
+                        pass
+                    verified = await verify_entry_mark(page, self.config.base_url, used_anchor, course, slot_label)
+                    if ok and verified:
+                        submitted += 1
+                        logger.info(f"✓ {course} {slot_label}: {code}")
+                except Exception as exc:
+                    logger.debug(f"Error submitting {course} {slot_label}: {exc}")
+                    async with self._result_lock:
+                        self.errors.append(str(exc))
+        finally:
+            await page.close()
+            await self._record_course_result(course, submitted=submitted)
+
+    def _determine_week(self, course: str) -> Optional[str]:
+        if self.config.week_override:
+            return self.config.week_override
+        env_week = os.getenv("WEEK_NUMBER")
+        if env_week:
+            return str(env_week)
+        return find_latest_week(course)
+
+    def _preview_course(self, course: str, week: str, codes: List[Dict[str, Optional[str]]]) -> None:
+        logger.info("The following items will be processed:")
+        for entry in codes:
+            slot_label = entry.get('slot', 'Unknown')
+            code = entry.get('code', 'Missing')
+            logger.info(f"{slot_label}, code {code}")
+
+        course_clean = ''.join(ch for ch in course if ch.isalnum())
+        week_clean = ''.join(ch for ch in str(week) if ch.isdigit())
+        rel_path = os.path.join('data', course_clean, f'{week_clean}.json')
+        if os.path.exists(rel_path):
+            logger.info(f"Generated codes JSON: {rel_path}")
+            raw_url = _compute_raw_url_for_path(rel_path)
+            if raw_url:
+                logger.info(f"Raw URL: {raw_url}")
+
+    async def _store_course(self, course: str) -> None:
+        async with self._result_lock:
+            self.courses_processed.append(course)
+
+    async def _record_course_result(self, course: str, submitted: int) -> None:
+        async with self._result_lock:
+            self.codes_submitted[course] = submitted
+
+    async def _record_stats(self) -> None:
+        overall_success = any(v > 0 for v in self.codes_submitted.values())
+        try:
+            self.stats.record_run(
+                success=overall_success,
+                courses_processed=self.courses_processed,
+                codes_submitted=self.codes_submitted,
+                errors=self.errors,
+            )
+        except Exception:
+            pass
+
 async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> None:
     """Main submission logic."""
     
@@ -600,174 +808,30 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     headless_env = os.getenv("HEADLESS", "1")
     headed = (headless_env in ("0", "false", "False"))
     storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
-    
-    stats = StatsManager()
-    
-    async with async_playwright() as p:
-        if browser_name == "webkit":
-            browser_type = p.webkit
-        elif browser_name == "firefox": 
-            browser_type = p.firefox
-        else:
-            browser_type = p.chromium
-        
-        if channel:
-            step(f"Launching system browser ({channel})...")
-        else:
-            step("Launching browser...")
-        debug_detail(f"Browser: {browser_name}, channel: {channel}, headless: {not headed}")
+    try:
+        concurrency = int(os.getenv('SUBMIT_CONCURRENCY', '1'))
+    except Exception:
+        concurrency = 1
 
-        launch_kwargs = {"headless": not headed}
-        if channel and browser_name == "chromium":
-            launch_kwargs["channel"] = channel
+    user_data_dir = os.getenv("USER_DATA_DIR")
+    week_override = os.getenv("WEEK_NUMBER")
 
-        try:
-            browser = await browser_type.launch(**launch_kwargs)
-            if channel:
-                success(f"Successfully launched system browser ({channel})")
-        except Exception as e:
-            if channel:
-                logger.warning(f"Failed to launch system browser ({channel}): {e}")
-                progress("Falling back to default browser...")
-            launch_kwargs.pop("channel", None)
-            browser = await browser_type.launch(**launch_kwargs)
-        
-        # Load session if available
-        context_kwargs = {}
-        if os.path.exists(storage_state) and _is_storage_state_effective(storage_state):
-            context_kwargs["storage_state"] = storage_state
-            progress("Loading saved session state...")
-        
-        context = await browser.new_context(**context_kwargs)
-        page = await context.new_page()
-        
-        try:
-            # Navigate to portal and check authentication
-            await page.goto(portal_url, timeout=60000)
-            
-            if not await is_authenticated(page):
-                logger.error("Not authenticated. Please run login first.")
-                return
-            
-            # Scrape enrolled courses
-            enrolled_courses = await scrape_enrolled_courses(page, base_url)
-            if not enrolled_courses:
-                logger.error("No enrolled courses found")
-                return
-            
-            await page.goto(f"{base_url}/student/Units.aspx")
-            
-            # Process each course
-            courses_processed: List[str] = []
-            codes_submitted: Dict[str, int] = {}
-            errors: List[str] = []
+    config = SubmissionConfig(
+        portal_url=portal_url,
+        base_url=base_url,
+        browser_name=browser_name,
+        channel=channel,
+        headed=headed,
+        storage_state=storage_state,
+        user_data_dir=user_data_dir,
+        dry_run=dry_run,
+        target_email=target_email,
+        concurrency=max(1, concurrency),
+        week_override=week_override,
+    )
 
-            # Optional concurrency across courses
-            try:
-                max_conc = int(os.getenv('SUBMIT_CONCURRENCY', '1'))
-            except Exception:
-                max_conc = 1
-
-            sem = asyncio.Semaphore(max_conc if max_conc > 0 else 1)
-
-            async def process_course(course: str) -> None:
-                nonlocal courses_processed, codes_submitted, errors
-                async with sem:
-                    try:
-                        step(f"Processing course: {course}")
-                        wk = os.getenv("WEEK_NUMBER") or find_latest_week(course)
-                        if not wk:
-                            logger.warning(f"No week number determined for {course}")
-                            return
-                        codes = parse_codes(course, wk)
-                        if not codes:
-                            return
-                        # Preview items (no confirmation required)
-                        logger.info("The following items will be processed:")
-                        for entry in codes:
-                            slot_label = entry.get('slot', 'Unknown')
-                            code = entry.get('code', 'Missing')
-                            logger.info(f"{slot_label}, code {code}")
-
-                        # Show local JSON path and raw URL if applicable
-                        course_clean = ''.join(ch for ch in course if ch.isalnum())
-                        week_clean = ''.join(ch for ch in str(wk) if ch.isdigit())
-                        rel_path = os.path.join('data', course_clean, f'{week_clean}.json')
-                        if os.path.exists(rel_path):
-                            logger.info(f"Generated codes JSON: {rel_path}")
-                            raw_url = _compute_raw_url_for_path(rel_path)
-                            if raw_url:
-                                logger.info(f"Raw URL: {raw_url}")
-                        courses_processed.append(course)
-                        if dry_run:
-                            logger.info(f"[DRY RUN] Would submit {len(codes)} codes for {course} week {wk}")
-                            return
-                        # Use a dedicated page for this course
-                        p = await context.new_page()
-                        submitted = 0
-                        try:
-                            # Pre-check any entry exists (fast)
-                            progress(f"Checking if {course} has attendance entries...")
-                            if not await open_entry_for_course(p, base_url, course):
-                                logger.warning(f"No entry page found for {course}; skipping this course")
-                                await p.close()
-                                return
-                            # Return to Units
-                            try:
-                                await p.goto(f"{base_url}/student/Units.aspx", timeout=20000)
-                            except Exception:
-                                pass
-                            for entry in codes:
-                                slot_label = entry.get('slot') or ''
-                                code = entry.get('code')
-                                if not code:
-                                    continue
-                                # Skip PASS slots entirely
-                                if 'pass' in slot_label.lower():
-                                    continue
-                                try:
-                                    progress(f"Opening {course} {slot_label}...")
-                                    opened, used_anchor = await open_entry_for_course_slot(p, base_url, course, slot_label)
-                                    if not opened:
-                                        # fallback to generic open
-                                        opened = await open_entry_for_course(p, base_url, course)
-                                        used_anchor = used_anchor or None
-                                    progress(f"Submitting code for {course} {slot_label}...")
-                                    ok, _ = await submit_code_on_entry(p, code)
-                                    # navigate back and verify via tick icon
-                                    try:
-                                        await p.goto(f"{base_url}/student/Units.aspx", timeout=20000)
-                                    except Exception:
-                                        pass
-                                    verified = await verify_entry_mark(p, base_url, used_anchor, course, slot_label)
-                                    if ok and verified:
-                                        submitted += 1
-                                        logger.info(f"✓ {course} {slot_label}: {code}")
-                                except Exception as e:
-                                    logger.debug(f"Error submitting {course} {slot_label}: {e}")
-                                    errors.append(str(e))
-                        finally:
-                            codes_submitted[course] = submitted
-                            try:
-                                await p.close()
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        errors.append(str(e))
-
-            # Kick off tasks
-            tasks = [asyncio.create_task(process_course(c)) for c in enrolled_courses]
-            await asyncio.gather(*tasks)
-
-            # Record overall run stats
-            overall_success = any(v > 0 for v in codes_submitted.values())
-            try:
-                stats.record_run(success=overall_success, courses_processed=courses_processed, codes_submitted=codes_submitted, errors=errors)
-            except Exception:
-                pass
-        
-        finally:
-            await browser.close()
+    workflow = SubmitWorkflow(config)
+    await workflow.run()
 
 
 def main():

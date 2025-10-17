@@ -1,14 +1,37 @@
 import os
 import argparse
 import asyncio
-from typing import List
+from dataclasses import dataclass
+from typing import List, Optional
 
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import Page
 from utils.logger import logger
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from utils.playwright_helpers import fill_first_match, click_first_match, maybe_switch_to_code_factor
 from utils.totp import gen_totp
+from core.browser_controller import BrowserConfig, BrowserController
+
+
+@dataclass
+class LoginCredentials:
+    username: Optional[str]
+    password: Optional[str]
+    totp_secret: Optional[str]
+    mfa_code: Optional[str]
+
+
+@dataclass
+class LoginConfig:
+    portal_url: str
+    browser_name: str = "chromium"
+    channel: Optional[str] = None
+    headed: bool = True
+    storage_state: str = "storage_state.json"
+    user_data_dir: Optional[str] = None
+    auto_login_enabled: bool = True
+    timeout_ms: int = 60000
+    login_check_timeout_ms: int = 60000
 
 
 async def debug_page_fields(page: Page) -> None:
@@ -39,11 +62,11 @@ async def debug_page_fields(page: Page) -> None:
         logger.warning(f"Failed to debug page fields: {e}")
 
 
-async def auto_login(page: Page) -> bool:
+async def auto_login(page: Page, creds: LoginCredentials) -> bool:
     """Attempt automatic login with credentials from environment"""
-    USERNAME = os.getenv("USERNAME")
-    PASSWORD = os.getenv("PASSWORD")
-    TOTP_SECRET = os.getenv("TOTP_SECRET")
+    USERNAME = creds.username
+    PASSWORD = creds.password
+    TOTP_SECRET = creds.totp_secret
     
     logger.info(f"Environment check - USERNAME: {'SET' if USERNAME else 'NOT SET'}")
     logger.info(f"Environment check - PASSWORD: {'SET' if PASSWORD else 'NOT SET'}")
@@ -259,9 +282,9 @@ async def auto_login(page: Page) -> bool:
             logger.warning("Could not enter MFA code, debugging page...")
             await debug_page_fields(page)
             return False
-    elif os.getenv('MFA_CODE'):
+    elif creds.mfa_code:
         logger.info("Using manual MFA code...")
-        otp = os.getenv('MFA_CODE').strip()
+        otp = creds.mfa_code.strip()
         await fill_first_match(page, [
             'input[name="otp"]',
             'input[name="code"]',
@@ -307,6 +330,129 @@ async def auto_login(page: Page) -> bool:
     return True
 
 
+class LoginWorkflow:
+    """Encapsulates login orchestration using a BrowserController."""
+
+    def __init__(self, config: LoginConfig):
+        self.config = config
+        self.credentials = LoginCredentials(
+            username=os.getenv("USERNAME"),
+            password=os.getenv("PASSWORD"),
+            totp_secret=os.getenv("TOTP_SECRET"),
+            mfa_code=os.getenv("MFA_CODE"),
+        )
+
+    def _browser_config(self, load_storage: bool = False) -> BrowserConfig:
+        storage_state = self.config.storage_state if (load_storage and not self.config.user_data_dir) else None
+        return BrowserConfig(
+            name=self.config.browser_name,
+            channel=self.config.channel,
+            headed=self.config.headed,
+            storage_state=storage_state,
+            user_data_dir=self.config.user_data_dir,
+            timeout_ms=self.config.timeout_ms,
+        )
+
+    async def run(self) -> None:
+        """Launch browser and ensure session is stored."""
+        async with BrowserController(self._browser_config()) as controller:
+            page = await controller.context.new_page()
+            await page.goto(self.config.portal_url, timeout=self.config.timeout_ms)
+
+            auto_success = False
+            if self.config.auto_login_enabled:
+                try:
+                    auto_success = await auto_login(page, self.credentials)
+                except Exception as exc:
+                    logger.warning(f"Auto-login error: {exc}")
+
+            if not auto_success:
+                self._prompt_manual_login(auto_success)
+                await self._await_user_confirmation()
+
+            await self._persist_session(controller, auto_success)
+
+    async def check_session(self) -> bool:
+        """Verify that an existing session is still valid."""
+        if self.config.user_data_dir:
+            cfg = BrowserConfig(
+                name=self.config.browser_name,
+                channel=self.config.channel,
+                headed=self.config.headed,
+                user_data_dir=self.config.user_data_dir,
+                timeout_ms=self.config.login_check_timeout_ms,
+            )
+        else:
+            storage = self.config.storage_state if os.path.exists(self.config.storage_state) else None
+            if not storage:
+                return False
+            cfg = BrowserConfig(
+                name=self.config.browser_name,
+                channel=self.config.channel,
+                headed=False,
+                storage_state=storage,
+                timeout_ms=self.config.login_check_timeout_ms,
+            )
+
+        async with BrowserController(cfg) as controller:
+            page = await controller.context.new_page()
+            attempts = 3
+            last_exc: Optional[Exception] = None
+            for attempt in range(attempts):
+                try:
+                    await page.goto(self.config.portal_url, timeout=self.config.login_check_timeout_ms)
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning(f"Session check navigation failed (attempt {attempt + 1}/{attempts}): {exc}")
+                    await asyncio.sleep(0.8)
+            if last_exc is not None:
+                return False
+            return await self._is_session_active(page)
+
+    async def _persist_session(self, controller: BrowserController, auto_success: bool) -> None:
+        if self.config.user_data_dir:
+            return
+        try:
+            await controller.context.storage_state(path=self.config.storage_state)
+            if is_storage_state_effective(self.config.storage_state):
+                if auto_success:
+                    logger.info(f"✅ Session automatically saved to {self.config.storage_state}")
+                else:
+                    logger.info(f"✅ Saved session to {self.config.storage_state}")
+            else:
+                logger.warning(f"Saved session to {self.config.storage_state}, but it appears empty.")
+        except Exception as exc:
+            logger.warning(f"Failed to save storage state: {exc}")
+
+    def _prompt_manual_login(self, auto_attempted: bool) -> None:
+        if auto_attempted:
+            logger.info("⚠️  Automatic login failed, please complete login manually.")
+        else:
+            logger.info("Please complete Okta login and MFA in the browser window.")
+        logger.info("After you are back on the portal, press Enter here to save the session...")
+
+    async def _await_user_confirmation(self) -> None:
+        try:
+            await asyncio.to_thread(input)
+        except Exception:
+            pass
+
+    async def _is_session_active(self, page: Page) -> bool:
+        from urllib.parse import urlparse
+
+        host = urlparse(page.url).netloc.lower()
+        if 'okta' in host:
+            return False
+        login_fields = page.locator('#okta-signin-username, input[name="username"], input[type="password"], #okta-signin-password')
+        try:
+            visible = await login_fields.first.is_visible(timeout=1500)
+        except Exception:
+            visible = False
+        return not visible
+
+
 async def run_login(portal_url: str,
                     browser_name: str = "chromium",
                     channel: str | None = None,
@@ -314,120 +460,17 @@ async def run_login(portal_url: str,
                     storage_state: str = "storage_state.json",
                     user_data_dir: str | None = None,
                     auto_login_enabled: bool = True) -> None:
-    async with async_playwright() as p:
-        if browser_name == "webkit":
-            browser_type = p.webkit
-        elif browser_name == "firefox":
-            browser_type = p.firefox
-        else:
-            browser_type = p.chromium
-
-        logger.info("Opening browser for login...")
-        if user_data_dir:
-            try:
-                context = await browser_type.launch_persistent_context(
-                    user_data_dir,
-                    headless=not headed,
-                    channel=channel,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
-                context = await browser_type.launch_persistent_context(
-                    user_data_dir,
-                    headless=not headed,
-                )
-            page = await context.new_page()
-            browser = None
-        else:
-            launch_kwargs = {"headless": not headed}
-            if channel and browser_name == "chromium":
-                launch_kwargs["channel"] = channel
-            try:
-                browser = await browser_type.launch(**launch_kwargs)
-            except Exception as e:
-                logger.warning(f"Failed to launch with system channel '{channel}': {e}. Falling back to default.")
-                launch_kwargs.pop("channel", None)
-                browser = await browser_type.launch(**launch_kwargs)
-            context = await browser.new_context()
-            page = await context.new_page()
-
-        await page.goto(portal_url, timeout=60_000)
-        
-        # Track auto-login success for session saving logic
-        auto_login_success = False
-        
-        # Attempt automatic login if enabled and credentials are available
-        if auto_login_enabled:
-            try:
-                login_success = await auto_login(page)
-                if login_success:
-                    auto_login_success = True
-                    logger.info("✅ Automatic login completed successfully!")
-                    # Wait a bit for any redirects to complete
-                    await asyncio.sleep(3)
-                    
-                    # Save session immediately after successful auto-login
-                    if not user_data_dir:
-                        try:
-                            await context.storage_state(path=storage_state)
-                            if is_storage_state_effective(storage_state):
-                                logger.info(f"✅ Session automatically saved to {storage_state}")
-                            else:
-                                logger.warning(f"Session saved to {storage_state}, but appears empty")
-                                logger.info("Please complete login manually in the browser window")
-                                logger.info("After you are back on the portal, press Enter to save session...")
-                                try:
-                                    input()
-                                except Exception:
-                                    pass
-                        except Exception as e:
-                            logger.warning(f"Failed to save session after auto-login: {e}")
-                            logger.info("Please complete login manually in the browser window")
-                            logger.info("After you are back on the portal, press Enter to save session...")
-                            try:
-                                input()
-                            except Exception:
-                                pass
-                else:
-                    logger.info("⚠️  Automatic login failed, please complete login manually")
-                    logger.info("Please complete Okta login and MFA in the browser window.")
-                    logger.info("After you are back on the portal, press Enter here to save the session...")
-                    try:
-                        input()
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.warning(f"Auto-login error: {e}")
-                logger.info("Please complete Okta login and MFA in the browser window.")
-                logger.info("After you are back on the portal, press Enter here to save the session...")
-                try:
-                    input()
-                except Exception:
-                    pass
-        else:
-            logger.info("Please complete Okta login and MFA in the browser window.")
-            logger.info("After you are back on the portal, press Enter here to save the session...")
-            try:
-                input()
-            except Exception:
-                pass
-
-        # Only save session manually if auto-login failed or wasn't used
-        if not user_data_dir and not (auto_login_enabled and auto_login_success):
-            try:
-                await context.storage_state(path=storage_state)
-                if is_storage_state_effective(storage_state):
-                    logger.info(f"✅ Saved session to {storage_state}")
-                else:
-                    logger.warning(f"Saved session to {storage_state}, but it appears empty.")
-                    logger.warning("Return to the attendance portal before pressing Enter, then try again.")
-            except Exception as e:
-                logger.warning(f"Failed to save storage state: {e}")
-
-        if browser:
-            await browser.close()
-        else:
-            await context.close()
+    config = LoginConfig(
+        portal_url=portal_url,
+        browser_name=browser_name,
+        channel=channel,
+        headed=headed,
+        storage_state=storage_state,
+        user_data_dir=user_data_dir,
+        auto_login_enabled=auto_login_enabled,
+    )
+    workflow = LoginWorkflow(config)
+    await workflow.run()
 
 
 async def check_session(check_url: str,
@@ -436,62 +479,18 @@ async def check_session(check_url: str,
                         headed: bool = False,
                         storage_state: str = "storage_state.json",
                         user_data_dir: str | None = None) -> bool:
-    from urllib.parse import urlparse
-
-    async with async_playwright() as p:
-        if browser_name == "webkit":
-            browser_type = p.webkit
-        elif browser_name == "firefox":
-            browser_type = p.firefox
-        else:
-            browser_type = p.chromium
-
-        context = None
-        browser = None
-        if user_data_dir:
-            context = await browser_type.launch_persistent_context(
-                user_data_dir,
-                headless=not headed,
-                channel=channel,
-            )
-            page = await context.new_page()
-        else:
-            launch_kwargs = {"headless": not headed}
-            if channel and browser_name == "chromium":
-                launch_kwargs["channel"] = channel
-            browser = await browser_type.launch(**launch_kwargs)
-            context = await browser.new_context(storage_state=storage_state if os.path.exists(storage_state) else None)
-            page = await context.new_page()
-
-        try:
-            retries = 2
-            timeout_ms = int(os.getenv("LOGIN_CHECK_TIMEOUT_MS", "60000"))
-            last_err = None
-            for attempt in range(retries + 1):
-                try:
-                    await page.goto(check_url, timeout=timeout_ms)
-                    last_err = None
-                    break
-                except Exception as e:
-                    last_err = e
-                    logger.warning(f"Session check navigation failed (attempt {attempt+1}/{retries+1}): {e}")
-                    await asyncio.sleep(0.8)
-            if last_err is not None:
-                return False
-            host = urlparse(page.url).netloc.lower()
-            if 'okta' in host:
-                return False
-            login_fields = page.locator('#okta-signin-username, input[name="username"], input[type="password"], #okta-signin-password')
-            try:
-                visible = await login_fields.first.is_visible(timeout=1500)
-            except Exception:
-                visible = False
-            return not visible
-        finally:
-            if browser:
-                await browser.close()
-            else:
-                await context.close()
+    config = LoginConfig(
+        portal_url=check_url,
+        browser_name=browser_name,
+        channel=channel,
+        headed=headed,
+        storage_state=storage_state,
+        user_data_dir=user_data_dir,
+        auto_login_enabled=False,
+        login_check_timeout_ms=int(os.getenv("LOGIN_CHECK_TIMEOUT_MS", "60000")),
+    )
+    workflow = LoginWorkflow(config)
+    return await workflow.check_session()
 
 def main():
     load_env(os.getenv("ENV_FILE", ".env"))
