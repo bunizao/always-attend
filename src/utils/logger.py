@@ -15,6 +15,7 @@ __all__ = [
     "debug_detail",
     "get_logger",
     "spinner",
+    "set_log_profile",
 ]
 
 # ---------------------------------------------------------------------------
@@ -262,3 +263,24 @@ def _clear_current_line() -> None:
 def spinner(message: str) -> _Spinner:
     """Return an async spinner context manager."""
     return _Spinner(message)
+
+
+def set_log_profile(profile: str) -> None:
+    """Adjust console logging verbosity at runtime."""
+    global LOG_PROFILE
+    profile = (profile or "user").lower()
+    level_map = {
+        "quiet": logging.WARNING,
+        "debug": logging.DEBUG,
+        "user": logging.INFO,
+    }
+    level = level_map.get(profile, logging.INFO)
+
+    base_logger = logging.getLogger("always_attend")
+    base_logger.setLevel(logging.DEBUG)
+    for handler in base_logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setLevel(level)
+
+    LOG_PROFILE = profile
+    os.environ["LOG_PROFILE"] = profile

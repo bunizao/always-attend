@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from utils.env_utils import load_env, ensure_env_file, append_to_env_file
-from utils.logger import logger, step, success
+from utils.logger import logger, step, success, set_log_profile
 from utils.session import is_storage_state_effective
 from config.config_wizard import ConfigWizard
 from utils.console import PortalConsole
@@ -244,6 +244,7 @@ def main():
     parser.add_argument("--login-only", action="store_true", help="Only perform login/session refresh and exit")
     parser.add_argument("--stats", action="store_true", help="Show attendance statistics and exit")
     parser.add_argument("--setup", action="store_true", help="Run configuration wizard")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
     args = parser.parse_args()
 
     # Run configuration wizard if requested or on first run
@@ -265,6 +266,8 @@ def main():
         os.environ['HEADLESS'] = '0'
     if args.week:
         os.environ['WEEK_NUMBER'] = str(args.week)
+    if args.debug:
+        set_log_profile("debug")
 
     env_headless = os.getenv('HEADLESS')
     headed_default = (env_headless in ('0', 'false', 'False', None))
