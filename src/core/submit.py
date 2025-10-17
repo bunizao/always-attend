@@ -590,6 +590,8 @@ class SubmitWorkflow:
             await self._record_course_result(course, submitted=0)
             return
 
+        debug_detail(f"{course}: {len(code_pool)} pending codes from data store")
+
         if self.config.dry_run:
             total = len(code_pool)
             async with spinner(self._progress_display(course, "Preparing", 0, total)) as spin:
@@ -616,6 +618,8 @@ class SubmitWorkflow:
                 logger.warning(f"No actionable entries found for {course}")
                 return
 
+            debug_detail(f"{course}: {len(entry_targets)} open portal entries detected")
+
             available_codes = code_pool.copy()
             total = len(entry_targets)
 
@@ -631,6 +635,7 @@ class SubmitWorkflow:
                         async with self._result_lock:
                             self.errors.append(f"{course} {display_label}: no available code")
                         fail_reasons.append(f"{display_label}: no code")
+                        debug_detail(f"{course}: no matching code for portal slot '{display_label}'")
                         continue
 
                     code_idx, code_entry = match
@@ -651,6 +656,7 @@ class SubmitWorkflow:
                         async with self._result_lock:
                             self.errors.append(f"{course} {slot_label}: unable to open entry")
                         fail_reasons.append(f"{slot_label}: open failed")
+                        debug_detail(f"{course}: failed to open portal entry for '{slot_label}'")
                         continue
 
                     ok, reason = await submit_code_on_entry(page, code)
@@ -660,6 +666,7 @@ class SubmitWorkflow:
                         async with self._result_lock:
                             self.errors.append(f"{course} {slot_label}: {reason or 'submission error'}")
                         fail_reasons.append(f"{slot_label}: {reason or 'submit error'}")
+                        debug_detail(f"{course}: submission error for '{slot_label}' – {reason}")
                         continue
 
                     verified = await verify_entry_candidate(
@@ -671,11 +678,13 @@ class SubmitWorkflow:
                     if verified:
                         submitted += 1
                         logger.info(f"✓ {course} {slot_label}: {code}")
+                        debug_detail(f"{course}: verified submission for '{slot_label}'")
                     else:
                         spin.note(f"{course} {slot_label}: verification failed", level="warning")
                         async with self._result_lock:
                             self.errors.append(f"{course} {slot_label}: verification failed")
                         fail_reasons.append(f"{slot_label}: verification failed")
+                        debug_detail(f"{course}: verification failed for '{slot_label}'")
 
                 spin.update(self._progress_display(course, "Completed", total, total))
                 if submitted:

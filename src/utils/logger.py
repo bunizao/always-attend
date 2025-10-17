@@ -120,7 +120,7 @@ def _configure_base_logger() -> LayeredAdapter:
     console_level = logging.INFO
     if LOG_PROFILE == "quiet":
         console_level = logging.WARNING
-    elif LOG_PROFILE == "debug":
+    elif LOG_PROFILE in {"debug", "verbose"}:
         console_level = logging.DEBUG
 
     if LOG_LEVEL_OVERRIDE:
@@ -272,6 +272,7 @@ def set_log_profile(profile: str) -> None:
     level_map = {
         "quiet": logging.WARNING,
         "debug": logging.DEBUG,
+        "verbose": logging.DEBUG,
         "user": logging.INFO,
     }
     level = level_map.get(profile, logging.INFO)
@@ -282,5 +283,6 @@ def set_log_profile(profile: str) -> None:
         if isinstance(handler, logging.StreamHandler):
             handler.setLevel(level)
 
+    global LOG_PROFILE
     LOG_PROFILE = profile
     os.environ["LOG_PROFILE"] = profile

@@ -174,6 +174,9 @@ main.py
 | `--week` | int | Submit codes for week number N | `--week 4` |
 | `--login-only` | flag | Only perform login/session refresh and exit | `--login-only` |
 | `--stats` | flag | Show attendance statistics and exit | `--stats` |
+| `--debug` | flag | Enable debug logging | `--debug` |
+| `--verbose` | flag | Enable high-detail logging (alias for `--debug`) | `--verbose` |
+| `--skip-update` | flag | Skip remote git update check before running | `--skip-update` |
 
 login.py
 
@@ -215,8 +218,9 @@ submit.py
 | `BROWSER_CHANNEL` | string | No | System channel (`chrome`/`msedge`/etc.) | `chrome` |
 | `HEADLESS` | flag (0/1 or true/false) | No | Run without UI (0 disables) | `0` |
 | `USER_DATA_DIR` | string path | No | Persistent browser profile directory | `~/.always-attend-profile` |
-| `LOG_PROFILE` | string | No | Logging profile (`user`/`quiet`/`debug`) | `debug` |
+| `LOG_PROFILE` | string | No | Logging profile (`user`/`quiet`/`debug`/`verbose`) | `verbose` |
 | `LOG_FILE` | string path | No | Optional log file destination | `/tmp/always-attend.log` |
+| `SKIP_UPDATE_CHECK` | flag (0/1 or true/false) | No | Skip remote git pull when set | `1` |
 
 ## Disclaimer
 

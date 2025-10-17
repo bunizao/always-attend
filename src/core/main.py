@@ -145,7 +145,7 @@ class PortalExperience:
 
 def check_for_updates():
     """Attempt to pull latest changes; continue silently on failure."""
-    if os.getenv('CI') in ('true', '1'):
+    if os.getenv('CI') in ('true', '1') or os.getenv('SKIP_UPDATE_CHECK') in ('1', 'true', 'True'):
         return
     try:
         if not os.path.isdir('.git'):
@@ -244,7 +244,9 @@ def main():
     parser.add_argument("--login-only", action="store_true", help="Only perform login/session refresh and exit")
     parser.add_argument("--stats", action="store_true", help="Show attendance statistics and exit")
     parser.add_argument("--setup", action="store_true", help="Run configuration wizard")
-    parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--verbose", action="store_true", help="Enable high-detail logging (same as debug)")
+    parser.add_argument("--skip-update", action="store_true", help="Skip remote update check")
     args = parser.parse_args()
 
     # Run configuration wizard if requested or on first run
@@ -254,6 +256,9 @@ def main():
             wizard = ConfigWizard()
             wizard.run()
             load_env(os.getenv('ENV_FILE', '.env'))
+
+    if args.skip_update:
+        os.environ['SKIP_UPDATE_CHECK'] = '1'
 
     if not args.setup:
         check_for_updates()
@@ -266,8 +271,9 @@ def main():
         os.environ['HEADLESS'] = '0'
     if args.week:
         os.environ['WEEK_NUMBER'] = str(args.week)
-    if args.debug:
-        set_log_profile("debug")
+    if args.debug or args.verbose:
+        profile = "verbose" if args.verbose and not args.debug else "debug"
+        set_log_profile(profile)
 
     env_headless = os.getenv('HEADLESS')
     headed_default = (env_headless in ('0', 'false', 'False', None))

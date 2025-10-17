@@ -241,6 +241,9 @@ submit.py
 | `--headed` | flag | 显示浏览器界面 | `--headed` |
 | `--dry-run` | flag | 仅解析并打印代码，不提交 | `--dry-run` |
 | `--week` | int | 提交第 N 周的代码 | `--week 6` |
+| `--debug` | flag | 输出调试级日志 | `--debug` |
+| `--verbose` | flag | 更详细的日志（等同 `--debug`） | `--verbose` |
+| `--skip-update` | flag | 跳过运行前的 git 更新检查 | `--skip-update` |
 
 ## 环境变量（Environment Variables）
 
@@ -259,8 +262,9 @@ submit.py
 | `BROWSER_CHANNEL` | string | 否 | 系统通道（`chrome`/`msedge` 等） | `chrome` |
 | `HEADLESS` | flag（0/1 或 true/false） | 否 | 无界面运行（0 表示关闭） | `0` |
 | `USER_DATA_DIR` | string path | 否 | 持久化浏览器上下文目录 | `~/.always-attend-profile` |
-| `LOG_PROFILE` | string | 否 | 日志模式（`user`/`quiet`/`debug`） | `debug` |
+| `LOG_PROFILE` | string | 否 | 日志模式（`user`/`quiet`/`debug`/`verbose`） | `verbose` |
 | `LOG_FILE` | string path | 否 | 可选日志文件路径 | `/tmp/always-attend.log` |
+| `SKIP_UPDATE_CHECK` | flag（0/1 或 true/false） | 否 | 设置为 1 时跳过运行前的 git 更新 | `1` |
 
 ## 免责声明（Disclaimer）
 
