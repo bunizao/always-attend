@@ -107,11 +107,14 @@ async def auto_login(page: Page, creds: LoginCredentials) -> bool:
     user_selectors = [
         # Standard Okta selectors
         '#okta-signin-username',
+        'input[name="identifier"]',
         'input[name="username"]',
         'input[autocomplete="username"]',
         'input[type="email"]',
         'input[data-se="o-form-input-username"]',
         'input[data-se*="username"]',
+        'input[id="idp-discovery-username"]',
+        'input[id="input28"]',
         # Generic selectors
         'input[placeholder*="user" i]',
         'input[placeholder*="email" i]',
@@ -145,6 +148,8 @@ async def auto_login(page: Page, creds: LoginCredentials) -> bool:
         'input[type="password"]',
         'input[data-se="o-form-input-password"]',
         'input[data-se*="password"]',
+        'input[id="okta-signin-password"]',
+        'input[id="input38"]',
         # Generic selectors
         'input[placeholder*="pass" i]',
         'input[placeholder*="密码" i]',

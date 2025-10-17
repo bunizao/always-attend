@@ -158,11 +158,32 @@ sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
 python main.py
 ```
 运行后会发生什么：
-- 从 `.env` 和当前环境读取配置（需要已设置 `PORTAL_URL`，并通过 `CODES_URL`/`CODES_FILE`/`CODES` 提供考勤代码来源）。
+- 从 `.env` 和当前环境读取配置（确保设置 `PORTAL_URL`，考勤代码存放于 `data/` 或 `CODES_DB_PATH` 指定目录）。
 - 若未找到有效会话，将自动弹出浏览器进行单点登录 (SSO)，并显示 MFA 验证页面；完成验证后会将会话保存到 `storage_state.json`。
 - 脚本会进入考勤门户，扫描本周条目并提交代码。
 - 请在终端查看日志结果；若缺少代码（常见情况），可使用项目的 Issue 模板提交：[![Open Issue](https://img.shields.io/badge/Open-Issue-blue)](https://github.com/bunizao/always-attend/issues/new)
 - 可选参数：`--headed` 观察浏览器、`--dry-run` 仅预览不提交、`--week N` 指定周次。
+
+## 📦 考勤数据库
+
+工具只会从 `data/`（或 `CODES_DB_PATH` 指定目录）加载考勤代码。目录推荐维持如下结构：
+
+```
+data/
+  FIT1045/
+    3.json     # [{ "slot": "Workshop 01", "code": "LCPPH" }, ...]
+  FIT1047/
+    7.json
+```
+
+若你维护了单独的 Git 仓库，可通过环境变量自动同步：
+
+```bash
+export CODES_DB_REPO="git@github.com:you/attendance-db.git"
+export CODES_DB_BRANCH="main"
+```
+
+每次运行时，程序都会克隆或 `git pull` 该仓库，确保本地数据始终最新。
 
 6) 更新项目
 ```bash
@@ -226,17 +247,20 @@ submit.py
 | 变量 | 类型 | 必填 | 说明 | 示例 |
 | --- | --- | --- | --- | --- |
 | `PORTAL_URL` | string URL | 是 | 考勤门户基础地址 | `https://attendance.monash.edu.my` |
-| `CODES_URL` | string URL | 否 | 代码 JSON 的直链 | `https://example.com/codes.json` |
-| `CODES_FILE` | string path | 否 | 本地代码 JSON 路径 | `/home/user/codes.json` |
-| `CODES` | string | 否 | 内联 `slot:code;slot:code` 对 | `"Workshop 1:ABCD1;Workshop 2:EFGH2"` |
-| `CODES_BASE_URL` | string URL | 否 | 自动发现的基础 URL | `https://raw.githubusercontent.com/user/repo/main` |
-| `WEEK_NUMBER` | int | 否 | 自动发现使用的周次 | `4` |
+| `CODES_DB_PATH` | string path | 否 | `课程/周次.json` 根目录 | `/srv/attendance-data` |
+| `CODES_DB_REPO` | string URL | 否 | 同步到本地的 Git 仓库地址 | `git@github.com:you/attendance-db.git` |
+| `CODES_DB_BRANCH` | string | 否 | 同步使用的分支 | `main` |
+| `WEEK_NUMBER` | int | 否 | 指定周次（否则自动检测最新周） | `4` |
 | `USERNAME` | string | 否 | Okta 用户名（自动登录） | `student@example.edu` |
 | `PASSWORD` | string | 否 | Okta 密码（自动登录） | `correcthorsebattery` |
 | `TOTP_SECRET` | string（base32） | 否 | MFA TOTP 秘钥（自动登录） | `JBSWY3DPEHPK3PXP` |
+| `AUTO_LOGIN` | flag（0/1） | 否 | 是否开启自动登录 | `1` |
 | `BROWSER` | string | 否 | 内核覆盖（`chromium`/`firefox`/`webkit`） | `chromium` |
 | `BROWSER_CHANNEL` | string | 否 | 系统通道（`chrome`/`msedge` 等） | `chrome` |
 | `HEADLESS` | flag（0/1 或 true/false） | 否 | 无界面运行（0 表示关闭） | `0` |
+| `USER_DATA_DIR` | string path | 否 | 持久化浏览器上下文目录 | `~/.always-attend-profile` |
+| `LOG_PROFILE` | string | 否 | 日志模式（`user`/`quiet`/`debug`） | `debug` |
+| `LOG_FILE` | string path | 否 | 可选日志文件路径 | `/tmp/always-attend.log` |
 
 ## 免责声明（Disclaimer）
 

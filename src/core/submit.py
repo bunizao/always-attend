@@ -2,19 +2,22 @@ import os
 import json
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Set
 from urllib.parse import urlparse, urlunparse
 import argparse
 import re
 
 from playwright.async_api import Page
 
-from utils.logger import logger, step, progress, success, debug_detail
+from utils.logger import logger, step, progress, success, debug_detail, spinner
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from core.stats import StatsManager
 from core.browser_controller import BrowserConfig, BrowserController
+import difflib
+import subprocess
+from pathlib import Path
 
 def to_base(origin_url: str) -> str:
     pu = urlparse(origin_url)
@@ -67,46 +70,44 @@ class SubmissionConfig:
     timeout_ms: int = 60000
 
 
-def _compute_raw_url_for_path(rel_path: str) -> Optional[str]:
-    """Compute a GitHub raw URL for a repository-relative file path.
+def _data_root() -> Path:
+    return Path(os.getenv("CODES_DB_PATH", "data")).resolve()
 
-    Precedence:
-    - If `CODES_BASE_URL` is set, join it with `rel_path`.
-    - Else, attempt to derive from `git` remote `origin` and current branch.
-    """
+
+def _run_git(args: List[str], cwd: Path) -> None:
+    result = subprocess.run(args, cwd=str(cwd), capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "git command failed")
+
+
+def sync_attendance_database() -> None:
+    repo_url = os.getenv("CODES_DB_REPO", "").strip()
+    if not repo_url:
+        return
+
+    dest = _data_root()
+    branch = (os.getenv("CODES_DB_BRANCH") or "main").strip() or "main"
     try:
-        # 1) Explicit base URL via env
-        base = os.getenv("CODES_BASE_URL", "").strip()
-        if base:
-            rel = rel_path.replace(os.sep, "/").lstrip("/")
-            return base.rstrip("/") + "/" + rel
-
-        # 2) Derive from git remote
-        import subprocess
-        remote = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
-        if remote.returncode != 0:
-            return None
-        url = (remote.stdout or "").strip()
-        owner_repo = ""
-        if url.startswith("git@github.com:"):
-            owner_repo = url.split(":", 1)[1]
-        elif url.startswith("https://github.com/"):
-            owner_repo = url.split("https://github.com/", 1)[1]
-        owner_repo = owner_repo.rstrip("/")
-        if owner_repo.endswith(".git"):
-            owner_repo = owner_repo[:-4]
-        if not owner_repo or "/" not in owner_repo:
-            return None
-
-        branch_proc = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
-        branch = (branch_proc.stdout or "").strip() or "main"
-        if branch.lower() == "head":
-            branch = "main"
-
-        rel = rel_path.replace(os.sep, "/").lstrip("/")
-        return f"https://raw.githubusercontent.com/{owner_repo}/{branch}/{rel}"
-    except Exception:
-        return None
+        if (dest / ".git").exists():
+            progress("Refreshing attendance database…")
+            _run_git(["git", "fetch", "--all"], dest)
+            _run_git(["git", "checkout", branch], dest)
+            _run_git(["git", "pull", "--ff-only", "origin", branch], dest)
+        else:
+            if dest.exists() and any(dest.iterdir()):
+                logger.warning(
+                    "Codes database path %s exists but is not a git repository; skipping sync.",
+                    dest,
+                )
+                return
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            progress("Cloning codes database…")
+            _run_git(["git", "clone", "--branch", branch, repo_url, str(dest)], dest.parent)
+        success("Codes database synced")
+    except FileNotFoundError:
+        logger.warning("Git is required to sync the codes database. Skipping sync.")
+    except Exception as exc:
+        logger.warning(f"Codes database sync failed: {exc}")
 
 
 async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
@@ -154,211 +155,155 @@ async def _collect_day_anchors(page: Page) -> List[str]:
     return anchors
 
 
-def _normalize_slot_text(slot: str) -> str:
-    s = (slot or "").strip().lower()
-    # normalize common labels e.g., "Workshop 1" -> "workshop 01"
-    s = re.sub(r"\b(\d)\b", r"0\1", s)  # pad single digit
-    return s
+@dataclass
+class EntryCandidate:
+    anchor: Optional[str]
+    href: str
+    raw_label: str
+    norm: str
+    tokens: Set[str]
 
 
-async def open_entry_for_course(page: Page, base_url: str, course_code: str, timeout_ms: int = 12000) -> bool:
-    """Open any entry for the course (fallback when slot-specific open is not available)."""
+def _normalize_label(text: str) -> str:
+    s = (text or "").lower()
+    s = s.replace("laboratory", "lab")
+    s = s.replace("tutorial", "tut")
+    s = s.replace("lecture", "lec")
+    s = s.replace("workshop", "workshop")
+    s = s.replace("applied", "applied")
+    s = s.replace("–", " ")
+    s = s.replace("-", " ")
+    s = s.replace(":", "")
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\b(\d)\b", lambda m: f"{int(m.group(1)):02d}", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _tokenize_label(text: str) -> Set[str]:
+    if not text:
+        return set()
+    return set(text.split())
+
+
+def _score_slot_match(slot_norm: str, slot_tokens: Set[str], candidate: EntryCandidate) -> float:
+    if not slot_norm:
+        return 0.0
+    if slot_norm in candidate.norm:
+        return 1.0
+    seq_ratio = difflib.SequenceMatcher(None, slot_norm, candidate.norm).ratio()
+    overlap = 0.0
+    if slot_tokens:
+        overlap = len(slot_tokens & candidate.tokens) / len(slot_tokens)
+    return seq_ratio * 0.7 + overlap * 0.3
+
+
+async def _select_day_anchor(page: Page, anchor: Optional[str], settle_ms: int = 150) -> None:
+    if not anchor:
+        return
+    sel = page.locator('#daySel')
+    if await sel.count() == 0:
+        return
     try:
-        if 'Units.aspx' not in (page.url or ''):
-            await page.goto(f"{base_url}/student/Units.aspx", timeout=timeout_ms)
+        await sel.select_option(value=anchor)
+    except Exception:
+        return
+    try:
+        await page.locator(f'#dayPanel_{anchor}').wait_for(state='visible', timeout=settle_ms + 3000)
+    except Exception:
+        await asyncio.sleep(settle_ms / 1000)
 
-        anchors = await _collect_day_anchors(page)
-        # Try current visible panel first (without switching)
+
+async def ensure_units_page(page: Page, base_url: str, timeout_ms: int) -> None:
+    if 'Units.aspx' not in (page.url or ''):
+        await page.goto(f"{base_url}/student/Units.aspx", timeout=timeout_ms)
+
+
+async def collect_course_entries(page: Page, base_url: str, course_code: str) -> List[EntryCandidate]:
+    await ensure_units_page(page, base_url, 20000)
+    anchors = await _collect_day_anchors(page)
+    seen_hrefs: Set[str] = set()
+    candidates: List[EntryCandidate] = []
+
+    for anchor in [None, *anchors]:
+        await _select_day_anchor(page, anchor)
+        root = page
+        if anchor:
+            panel = page.locator(f'#dayPanel_{anchor}')
+            if await panel.count() > 0:
+                root = panel
+        entries = root.locator('li:not(.ui-disabled)').filter(has_text=re.compile(re.escape(course_code), re.I))
+        count = await entries.count()
+        for i in range(count):
+            li = entries.nth(i)
+            link = li.locator('a[href*="Entry.aspx"]').first
+            if await link.count() == 0:
+                continue
+            href = await link.get_attribute('href')
+            if not href or href in seen_hrefs:
+                continue
+            seen_hrefs.add(href)
+            try:
+                raw_label = await li.inner_text()
+            except Exception:
+                raw_label = ""
+            norm = _normalize_label(raw_label)
+            tokens = _tokenize_label(norm)
+            candidates.append(EntryCandidate(anchor=anchor, href=href, raw_label=raw_label, norm=norm, tokens=tokens))
+    return candidates
+
+
+def pick_candidate_for_slot(slot_label: str, entries: List[EntryCandidate]) -> Optional[EntryCandidate]:
+    slot_norm = _normalize_label(slot_label)
+    slot_tokens = _tokenize_label(slot_norm)
+    best: Optional[EntryCandidate] = None
+    best_score = 0.0
+    for entry in entries:
+        score = _score_slot_match(slot_norm, slot_tokens, entry)
+        if score > best_score:
+            best = entry
+            best_score = score
+    if best_score < 0.45:
+        return None
+    return best
+
+
+async def open_entry_candidate(page: Page, base_url: str, candidate: EntryCandidate, timeout_ms: int = 12000) -> bool:
+    await ensure_units_page(page, base_url, timeout_ms)
+    await _select_day_anchor(page, candidate.anchor)
+
+    locator = page.locator(f'a[href="{candidate.href}"]').first
+    if await locator.count() == 0:
+        token = candidate.href.split("Entry.aspx", 1)[-1]
+        locator = page.locator(f'a[href*="{token}"]').first
+    if await locator.count() == 0:
+        return False
+
+    try:
+        await locator.scroll_into_view_if_needed()
+        await locator.click()
         try:
-            # Scope to currently visible day panel if any
-            root = page.locator('div.dayPanel:visible').first
-            if await root.count() == 0:
-                root = page
-            li_nodes = root.locator('li:not(.ui-disabled)').filter(has_text=re.compile(re.escape(course_code), re.I))
-            li_count = await li_nodes.count()
-            for i in range(li_count):
-                li = li_nodes.nth(i)
-                try:
-                    txt = (await li.inner_text()).lower()
-                    if 'pass' in txt:
-                        continue
-                except Exception:
-                    pass
-                link = li.locator('a[href*="Entry.aspx"]').first
-                if await link.count() == 0:
-                    continue
-                try:
-                    await li.scroll_into_view_if_needed()
-                    if not await link.is_visible():
-                        await li.click()
-                    else:
-                        await link.click()
-                    try:
-                        await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
-                    except Exception:
-                        pass
-                    if 'Entry.aspx' in (page.url or ''):
-                        return True
-                except Exception:
-                    continue
+            await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
         except Exception:
             pass
-
-        # Iterate all anchors: select option to ensure panel is visible and stable
-        for a in anchors:
-            try:
-                sel = page.locator('#daySel')
-                if await sel.count() > 0:
-                    await sel.select_option(value=a)
-                # Wait for panel and small settle time
-                try:
-                    await page.locator(f'#dayPanel_{a}').wait_for(state='visible', timeout=timeout_ms)
-                except Exception:
-                    await asyncio.sleep(_env_ms('DAY_SWITCH_SETTLE_MS', 150)/1000)
-                root = page.locator(f'#dayPanel_{a}') if await page.locator(f'#dayPanel_{a}').count() > 0 else page
-                # First try course-filtered entries
-                # Prefer course-filtered entries that are visible
-                entries = root.locator('li:not(.ui-disabled)').filter(has_text=re.compile(re.escape(course_code), re.I))
-                count = await entries.count()
-                for i in range(count):
-                    li = entries.nth(i)
-                    link = li.locator('a[href*="Entry.aspx"]').first
-                    if await link.count() == 0:
-                        continue
-                    try:
-                        await li.scroll_into_view_if_needed()
-                        if not await link.is_visible():
-                            # Click the li to expose link
-                            await li.click()
-                        else:
-                            await link.click()
-                        try:
-                            await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
-                        except Exception:
-                            pass
-                        if 'Entry.aspx' in (page.url or ''):
-                            return True
-                    except Exception:
-                        continue
-                # Fallback: any Entry.aspx within this panel
-                link = root.locator('a[href*="Entry.aspx"]').first
-                if await link.count() > 0:
-                    try:
-                        await link.scroll_into_view_if_needed()
-                        await link.click()
-                        try:
-                            await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
-                        except Exception:
-                            pass
-                        if 'Entry.aspx' in (page.url or ''):
-                            return True
-                    except Exception:
-                        pass
-            except Exception:
-                continue
-        return False
-    except Exception as e:
-        logger.warning(f"Failed to open entry for {course_code}: {e}")
+        return 'Entry.aspx' in (page.url or '')
+    except Exception:
         return False
 
 
-async def open_entry_for_course_slot(page: Page, base_url: str, course_code: str, slot_label: str, timeout_ms: int = 12000) -> Tuple[bool, Optional[str]]:
-    """Open the specific entry matching course+slot; returns (opened, anchor_used)."""
+async def verify_entry_candidate(page: Page, base_url: str, candidate: EntryCandidate, timeout_ms: int = 8000) -> bool:
+    await ensure_units_page(page, base_url, timeout_ms)
+    await _select_day_anchor(page, candidate.anchor)
+
+    locator = page.locator(f'a[href="{candidate.href}"]').first
+    if await locator.count() == 0:
+        token = candidate.href.split("Entry.aspx", 1)[-1]
+        locator = page.locator(f'a[href*="{token}"]').first
+    if await locator.count() == 0:
+        return False
+    li = locator.locator("xpath=ancestor::li[1]")
     try:
-        target_slot_norm = _normalize_slot_text(slot_label)
-        if 'Units.aspx' not in (page.url or ''):
-            await page.goto(f"{base_url}/student/Units.aspx", timeout=timeout_ms)
-
-        anchors = await _collect_day_anchors(page)
-
-        async def try_in_root(root) -> bool:
-            # li that mentions course and slot
-            candidates = root.locator('li:not(.ui-disabled)').filter(
-                has_text=re.compile(re.escape(course_code), re.I)
-            ).filter(
-                has_text=re.compile(re.escape(slot_label), re.I)
-            )
-            count = await candidates.count()
-            for i in range(count):
-                li = candidates.nth(i)
-                link = li.locator('a[href*="Entry.aspx"]').first
-                if await link.count() == 0:
-                    continue
-                try:
-                    await li.scroll_into_view_if_needed()
-                    if not await link.is_visible():
-                        await li.click()
-                    else:
-                        await link.click()
-                    try:
-                        await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
-                    except Exception:
-                        pass
-                    if 'Entry.aspx' in (page.url or ''):
-                        return True
-                except Exception:
-                    continue
-            return False
-
-        # try current visible panel (panel not having display:none)
-        root = page.locator('div.dayPanel:not([style*="display:none"])').first
-        if await root.count() == 0:
-            root = page
-        if await try_in_root(root):
-            # Cannot know anchor; return True,None
-            return True, None
-
-        # iterate anchors
-        for a in anchors:
-            try:
-                sel = page.locator('#daySel')
-                if await sel.count() > 0:
-                    await sel.select_option(value=a)
-                try:
-                    await page.locator(f'#dayPanel_{a}').wait_for(state='visible', timeout=timeout_ms)
-                except Exception:
-                    await asyncio.sleep(_env_ms('DAY_SWITCH_SETTLE_MS', 150)/1000)
-                visible_root = page.locator(f'#dayPanel_{a}') if await page.locator(f'#dayPanel_{a}').count() > 0 else page
-                if await try_in_root(visible_root):
-                    return True, a
-            except Exception:
-                continue
-        return False, None
-    except Exception as e:
-        logger.debug(f"Slot-open failed for {course_code} {slot_label}: {e}")
-        return False, None
-
-
-async def verify_entry_mark(page: Page, base_url: str, anchor: Optional[str], course_code: str, slot_label: str, timeout_ms: int = 8000) -> bool:
-    """Verify on Units page that the given course+slot shows a tick icon (success)."""
-    try:
-        if 'Units.aspx' not in (page.url or ''):
-            await page.goto(f"{base_url}/student/Units.aspx", timeout=timeout_ms)
-        if anchor:
-            sel = page.locator('#daySel')
-            if await sel.count() > 0:
-                try:
-                    await sel.select_option(value=anchor)
-                except Exception:
-                    pass
-            try:
-                await page.locator(f'#dayPanel_{anchor}').wait_for(state='visible', timeout=timeout_ms)
-            except Exception:
-                await asyncio.sleep(0.2)
-            root = page.locator(f'#dayPanel_{anchor}') if await page.locator(f'#dayPanel_{anchor}').count() > 0 else page
-        else:
-            root = page
-
-        # success if li mentioning course+slot has tick icon
-        item = root.locator('li').filter(
-            has_text=re.compile(re.escape(course_code), re.I)
-        ).filter(
-            has_text=re.compile(re.escape(slot_label), re.I)
-        )
-        # require tick.png in this item
-        if await item.locator('img[src*="tick"]').count() > 0:
-            return True
-        return False
+        return await li.locator('img[src*="tick"]').count() > 0
     except Exception:
         return False
 
@@ -368,15 +313,14 @@ def find_latest_week(course: str) -> Optional[str]:
     Finds the highest numbered week JSON file in the data directory for a course.
     """
     try:
-        course_dir = os.path.join('data', ''.join(ch for ch in course if ch.isalnum()))
-        if not os.path.isdir(course_dir):
+        course_dir = _data_root() / ''.join(ch for ch in course if ch.isalnum())
+        if not course_dir.is_dir():
             return None
-        weeks = []
-        for name in os.listdir(course_dir):
-            if name.endswith('.json'):
-                base = name[:-5]
-                if base.isdigit():
-                    weeks.append(int(base))
+        weeks = [
+            int(path.stem)
+            for path in course_dir.glob("*.json")
+            if path.stem.isdigit()
+        ]
         if not weeks:
             return None
         return str(max(weeks))
@@ -384,108 +328,31 @@ def find_latest_week(course: str) -> Optional[str]:
         return None
 
 def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = None) -> List[Dict[str, Optional[str]]]:
-    """Parse attendance codes from various sources with precedence.
+    """Load attendance codes from the synchronised data repository."""
 
-    1) Per-slot env overrides (e.g., WORKSHOP_1, APPLIED_02, LAB_07)
-    2) CODES_URL
-    3) CODES_FILE
-    4) CODES (inline)
-    5) Local data: data/<COURSE>/<WEEK>.json
-    """
+    if not course_code or not week_number:
+        return []
 
-    # 1) Per-slot env overrides
-    slot_env: List[Dict[str, Optional[str]]] = []
-    for key, val in os.environ.items():
-        if not val:
-            continue
-        k = key.upper()
-        if k.startswith('WORKSHOP_'):
-            suffix = k[len('WORKSHOP_'):].strip()
-            if suffix:
-                slot_env.append({"slot": f"Workshop {suffix}", "code": val.strip()})
-        elif k.startswith('APPLIED_'):
-            suffix = k[len('APPLIED_'):].strip()
-            if suffix:
-                slot_env.append({"slot": f"Applied {suffix}", "code": val.strip()})
-        elif k.startswith('LAB_'):
-            suffix = k[len('LAB_'):].strip()
-            if suffix:
-                slot_env.append({"slot": f"Lab {suffix}", "code": val.strip()})
-    if slot_env:
-        debug_detail("Using per-slot env overrides")
-        return slot_env
+    course_clean = ''.join(ch for ch in course_code if ch.isalnum())
+    week_clean = ''.join(ch for ch in str(week_number) if ch.isdigit())
+    data_path = _data_root() / course_clean / f'{week_clean}.json'
 
-    # 2) CODES_URL
-    codes_url = os.getenv("CODES_URL", "").strip()
-    if codes_url:
-        debug_detail(f"Loading codes from URL: {codes_url}")
-        # Support file:// scheme directly
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(codes_url)
-            if parsed.scheme == 'file':
-                path = parsed.path
-                if os.name == 'nt' and path.startswith('/'):
-                    # strip leading slash for Windows file URI
-                    path = path.lstrip('/')
-                with open(path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load file URL: {e}")
+    if not data_path.exists():
+        logger.warning(f"No attendance codes found for {course_code} week {week_number}.")
+        return []
 
-        # Fallback to HTTP(S) via aiohttp
-        import aiohttp
-        import asyncio
+    try:
+        with data_path.open('r', encoding='utf-8') as handle:
+            payload = json.load(handle)
+    except Exception as exc:
+        logger.error(f"Failed to read attendance codes from {data_path}: {exc}")
+        return []
 
-        async def fetch_codes():
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(codes_url) as response:
-                        if response.status == 200:
-                            return await response.json()
-            except Exception as e:
-                logger.warning(f"Failed to fetch codes from URL: {e}")
-            return []
+    if not isinstance(payload, list):
+        logger.warning(f"Unexpected structure in {data_path}; expected a list of slots.")
+        return []
 
-        return asyncio.run(fetch_codes())
-
-    # 3) CODES_FILE
-    codes_file = os.getenv("CODES_FILE", "").strip()
-    if codes_file and os.path.exists(codes_file):
-        debug_detail(f"Loading codes from file: {codes_file}")
-        try:
-            with open(codes_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load codes file: {e}")
-
-    # 4) CODES inline
-    codes_env = os.getenv("CODES", "").strip()
-    if codes_env:
-        debug_detail("Using inline CODES from environment")
-        parsed = []
-        for pair in codes_env.split(";"):
-            if ":" in pair:
-                slot, code = pair.split(":", 1)
-                parsed.append({"slot": slot.strip(), "code": code.strip()})
-        return parsed
-
-    # 5) Local data
-    if course_code and week_number:
-        course_clean = ''.join(ch for ch in course_code if ch.isalnum())
-        week_clean = ''.join(ch for ch in str(week_number) if ch.isdigit())
-        data_path = os.path.join('data', course_clean, f'{week_clean}.json')
-        if os.path.exists(data_path):
-            debug_detail(f"Loading codes from local data: {data_path}")
-            try:
-                with open(data_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to load local data: {e}")
-
-    logger.warning(f"No attendance codes found for {course_code} week {week_number}.")
-    logger.info("You can add missing codes by creating an issue at: https://github.com/bunizao/always-attend/issues/new?template=attendance-codes.yml")
-    return []
+    return payload
 
 
 async def is_authenticated(page: Page) -> bool:
@@ -551,9 +418,8 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
             return False, "Could not find submit button"
         
         # Wait for response and check result
-        progress("Waiting for server response...")
-        await asyncio.sleep(2)
-        
+        await asyncio.sleep(1.5)
+
         # Check for success/error messages
         page_text = await page.text_content('body') or ""
         if "successfully" in page_text.lower() or "submitted" in page_text.lower():
@@ -565,30 +431,6 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
             
     except Exception as e:
         return False, f"Submission error: {str(e)}"
-
-
-async def collect_day_anchors(page: Page, base: str, start_monday: Optional[datetime] = None) -> List[str]:
-    """Collect available day anchors from the attendance portal."""
-    try:
-        # Navigate to units page to find available weeks
-        units_url = f"{base}/student/Units.aspx"
-        await page.goto(units_url, timeout=30000)
-        
-        # Extract day anchors from page links
-        links = await page.locator('a').all()
-        anchors = []
-        
-        for link in links:
-            href = await link.get_attribute('href') or ""
-            if 'day=' in href:
-                match = re.search(r'day=([^&]+)', href)
-                if match:
-                    anchors.append(match.group(1))
-        
-        return list(set(anchors))
-    except Exception as e:
-        logger.warning(f"Failed to collect day anchors: {e}")
-        return []
 
 
 class SubmitWorkflow:
@@ -683,22 +525,21 @@ class SubmitWorkflow:
         await self._store_course(course)
 
         if self.config.dry_run:
-            logger.info(f"[DRY RUN] Would submit {len(codes)} codes for {course} week {week}")
+            for entry in codes:
+                slot_label = entry.get('slot') or ''
+                async with spinner(f"Processing {course} – {slot_label or 'Unknown slot'}") as spin:
+                    await asyncio.sleep(0.05)
+                    spin.succeed()
             await self._record_course_result(course, submitted=0)
             return
 
         page = await controller.context.new_page()
         submitted = 0
         try:
-            progress(f"Checking if {course} has attendance entries...")
-            if not await open_entry_for_course(page, self.config.base_url, course):
-                logger.warning(f"No entry page found for {course}; skipping this course")
+            entries = await collect_course_entries(page, self.config.base_url, course)
+            if not entries:
+                logger.warning(f"No attendance entries visible for {course}")
                 return
-
-            try:
-                await page.goto(f"{self.config.base_url}/student/Units.aspx", timeout=self.config.timeout_ms)
-            except Exception:
-                pass
 
             for entry in codes:
                 slot_label = entry.get('slot') or ''
@@ -708,31 +549,47 @@ class SubmitWorkflow:
                 if 'pass' in slot_label.lower():
                     continue
 
-                try:
-                    progress(f"Opening {course} {slot_label}...")
-                    opened, used_anchor = await open_entry_for_course_slot(
+                candidate = pick_candidate_for_slot(slot_label, entries)
+                async with spinner(f"Processing {course} – {slot_label or 'Unknown slot'}") as spin:
+                    if candidate is None:
+                        spin.fail("Slot not visible")
+                        async with self._result_lock:
+                            self.errors.append(f"{course} {slot_label}: slot not visible")
+                        continue
+
+                    opened = await open_entry_candidate(
                         page,
                         self.config.base_url,
-                        course,
-                        slot_label,
+                        candidate,
+                        timeout_ms=self.config.timeout_ms,
                     )
                     if not opened:
-                        opened = await open_entry_for_course(page, self.config.base_url, course)
-                        used_anchor = used_anchor or None
-                    progress(f"Submitting code for {course} {slot_label}...")
-                    ok, _ = await submit_code_on_entry(page, code)
-                    try:
-                        await page.goto(f"{self.config.base_url}/student/Units.aspx", timeout=self.config.timeout_ms)
-                    except Exception:
-                        pass
-                    verified = await verify_entry_mark(page, self.config.base_url, used_anchor, course, slot_label)
-                    if ok and verified:
+                        spin.fail("Entry open failed")
+                        async with self._result_lock:
+                            self.errors.append(f"{course} {slot_label}: unable to open entry")
+                        continue
+
+                    ok, reason = await submit_code_on_entry(page, code)
+                    await ensure_units_page(page, self.config.base_url, self.config.timeout_ms)
+                    if not ok:
+                        spin.fail(reason or "Submission error")
+                        async with self._result_lock:
+                            self.errors.append(f"{course} {slot_label}: {reason or 'submission error'}")
+                        continue
+
+                    verified = await verify_entry_candidate(
+                        page,
+                        self.config.base_url,
+                        candidate,
+                        timeout_ms=self.config.timeout_ms,
+                    )
+                    if verified:
+                        spin.succeed()
                         submitted += 1
-                        logger.info(f"✓ {course} {slot_label}: {code}")
-                except Exception as exc:
-                    logger.debug(f"Error submitting {course} {slot_label}: {exc}")
-                    async with self._result_lock:
-                        self.errors.append(str(exc))
+                    else:
+                        spin.fail("Verification failed")
+                        async with self._result_lock:
+                            self.errors.append(f"{course} {slot_label}: verification failed")
         finally:
             await page.close()
             await self._record_course_result(course, submitted=submitted)
@@ -746,20 +603,10 @@ class SubmitWorkflow:
         return find_latest_week(course)
 
     def _preview_course(self, course: str, week: str, codes: List[Dict[str, Optional[str]]]) -> None:
-        logger.info("The following items will be processed:")
-        for entry in codes:
-            slot_label = entry.get('slot', 'Unknown')
-            code = entry.get('code', 'Missing')
-            logger.info(f"{slot_label}, code {code}")
-
         course_clean = ''.join(ch for ch in course if ch.isalnum())
         week_clean = ''.join(ch for ch in str(week) if ch.isdigit())
-        rel_path = os.path.join('data', course_clean, f'{week_clean}.json')
-        if os.path.exists(rel_path):
-            logger.info(f"Generated codes JSON: {rel_path}")
-            raw_url = _compute_raw_url_for_path(rel_path)
-            if raw_url:
-                logger.info(f"Raw URL: {raw_url}")
+        rel_path = _data_root() / course_clean / f'{week_clean}.json'
+        debug_detail(f"{course}: {len(codes)} codes loaded from {rel_path}")
 
     async def _store_course(self, course: str) -> None:
         async with self._result_lock:
@@ -815,6 +662,8 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
 
     user_data_dir = os.getenv("USER_DATA_DIR")
     week_override = os.getenv("WEEK_NUMBER")
+
+    sync_attendance_database()
 
     config = SubmissionConfig(
         portal_url=portal_url,

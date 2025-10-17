@@ -109,24 +109,26 @@ git pull
 
 See the Environment Variables section below for a full list.
 
-## 📦 Code Sources
+## 📦 Attendance Database
 
-Provide attendance codes via one of the sources below (in priority order):
+Always Attend now reads attendance codes exclusively from the `data/` directory (or the folder specified by `CODES_DB_PATH`). Each course gets its own subfolder and every week is represented by a JSON file:
+
+```
+data/
+  FIT1045/
+    3.json     # [{"slot": "Workshop 01", "code": "LCPPH"}, ...]
+  FIT1047/
+    7.json
+```
+
+If you maintain your codes in a separate Git repository, point the tool at it:
 
 ```bash
-# Inline codes
-export CODES="Workshop 1:ABCD1;Workshop 2:EFGH2"
-
-# Or local file (JSON array of {slot, code, date?})
-export CODES_FILE=/path/to/codes.json
-
-# Or remote JSON URL
-export CODES_URL=https://example.com/codes.json
-
-# Or auto-discover from repo layout
-export CODES_BASE_URL=https://raw.githubusercontent.com/you/repo/main
-export WEEK_NUMBER=6
+export CODES_DB_REPO="git@github.com:you/attendance-db.git"
+export CODES_DB_BRANCH="main"
 ```
+
+On every run the repository is cloned (if missing) or updated before submission.  Without a repository the tool simply reads whatever JSON files already exist under `data/`.
 
 ## 📊 Statistics Tracking
 
@@ -201,17 +203,20 @@ submit.py
 | Variable | Type | Required | Description | Example |
 | --- | --- | --- | --- | --- |
 | `PORTAL_URL` | string URL | Yes | Attendance portal base URL | `https://attendance.monash.edu.my` |
-| `CODES_URL` | string URL | No | Direct URL to codes JSON | `https://example.com/codes.json` |
-| `CODES_FILE` | string path | No | Local path to codes JSON | `/home/user/codes.json` |
-| `CODES` | string | No | Inline `slot:code;slot:code` pairs | `"Workshop 1:ABCD1;Workshop 2:EFGH2"` |
-| `CODES_BASE_URL` | string URL | No | Base URL for auto-discovery | `https://raw.githubusercontent.com/user/repo/main` |
-| `WEEK_NUMBER` | int | No | Week number for auto-discovery | `4` |
+| `CODES_DB_PATH` | string path | No | Root folder containing `COURSE/WEEK.json` files | `/srv/attendance-data` |
+| `CODES_DB_REPO` | string URL | No | Git repository that mirrors the data tree | `git@github.com:you/attendance-db.git` |
+| `CODES_DB_BRANCH` | string | No | Branch to checkout when syncing the repository | `main` |
+| `WEEK_NUMBER` | int | No | Force a specific week instead of auto-detecting | `4` |
 | `USERNAME` | string | No | Okta username for auto-login | `student@example.edu` |
 | `PASSWORD` | string | No | Okta password for auto-login | `correcthorsebattery` |
 | `TOTP_SECRET` | string (base32) | No | MFA TOTP secret for auto-login | `JBSWY3DPEHPK3PXP` |
+| `AUTO_LOGIN` | flag (0/1) | No | Toggle automatic login | `1` |
 | `BROWSER` | string | No | Engine override (`chromium`/`firefox`/`webkit`) | `chromium` |
 | `BROWSER_CHANNEL` | string | No | System channel (`chrome`/`msedge`/etc.) | `chrome` |
 | `HEADLESS` | flag (0/1 or true/false) | No | Run without UI (0 disables) | `0` |
+| `USER_DATA_DIR` | string path | No | Persistent browser profile directory | `~/.always-attend-profile` |
+| `LOG_PROFILE` | string | No | Logging profile (`user`/`quiet`/`debug`) | `debug` |
+| `LOG_FILE` | string path | No | Optional log file destination | `/tmp/always-attend.log` |
 
 ## Disclaimer
 
