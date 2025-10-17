@@ -161,7 +161,3 @@ class PortalConsole:
         for line in body:
             print(self._wrap(line, indent=4))
         print(self._rule(accent=accent))
-*** End Patch
-        for line in body:
-            print(self._wrap(line, indent=4))
-        print(border)
