@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import textwrap
+import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
@@ -23,6 +25,7 @@ class ConsolePalette:
     yellow: str = "\033[33m"
     red: str = "\033[31m"
     white: str = "\033[97m"
+    monash: str = "\033[38;2;0;83;159m"
 
     @property
     def disabled(self) -> bool:
@@ -56,6 +59,7 @@ class PortalConsole:
     def __init__(self) -> None:
         self.palette = ConsolePalette()
         self.width = max(68, min(self._detect_width(), 120))
+        self.is_tty = sys.stdout.isatty()
 
     def _detect_width(self) -> int:
         return shutil.get_terminal_size((100, 20)).columns
@@ -78,6 +82,26 @@ class PortalConsole:
         line = rule_line[: self.width]
         return self.palette.apply(line, color)
 
+    def _center_text(self, text: str) -> str:
+        stripped = text.rstrip()
+        pad_total = max(self.width - len(stripped), 0)
+        left = pad_total // 2
+        return " " * left + stripped
+
+    def _play_banner_animation(self, accent: str) -> None:
+        if not self.is_tty:
+            return
+        color = getattr(self.palette, accent, "")
+        frames = ["   ", "•  ", "•• ", "•••", "•• ", "•  "]
+        for frame in frames:
+            text = self._center_text(f"ALWAYS ATTEND {frame}")
+            sys.stdout.write(self.palette.apply(text, color, self.palette.bold))
+            sys.stdout.flush()
+            time.sleep(0.08)
+            sys.stdout.write("\r")
+        sys.stdout.write(" " * self.width + "\r")
+        sys.stdout.flush()
+
     # ------------------------------------------------------------------ public helpers
     def clear_line(self) -> None:
         print()
@@ -88,11 +112,14 @@ class PortalConsole:
         else:
             print("\n" * 3)
 
-    def banner(self, subtitle: Optional[str] = None, *, accent: str = "cyan") -> None:
-        banner = self.palette.apply(self._BANNER.strip("\n"), getattr(self.palette, accent), self.palette.bold)
-        print(banner)
+    def banner(self, subtitle: Optional[str] = None, *, accent: str = "monash") -> None:
+        self._play_banner_animation(accent)
+        color = getattr(self.palette, accent, "")
+        for raw_line in self._BANNER.strip("\n").splitlines():
+            centered = self._center_text(raw_line)
+            print(self.palette.apply(centered, color, self.palette.bold))
         if subtitle:
-            print(self._rule(subtitle, accent="blue"))
+            print(self._rule(subtitle, accent=accent))
 
     def headline(self, title: str, *, accent: str = "blue") -> None:
         print(self._rule(title, accent=accent))
