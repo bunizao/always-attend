@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from playwright.async_api import Page
-from utils.logger import logger
+from utils.logger import logger, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from utils.playwright_helpers import fill_first_match, click_first_match, maybe_switch_to_code_factor
@@ -37,10 +37,9 @@ class LoginConfig:
 async def debug_page_fields(page: Page) -> None:
     """Debug function to log all input fields on the page"""
     try:
-        # Get all input elements
         inputs = await page.query_selector_all('input')
-        logger.info(f"Found {len(inputs)} input fields on page:")
-        
+        debug_detail(f"Found {len(inputs)} input fields on page")
+
         for i, input_el in enumerate(inputs):
             try:
                 input_type = await input_el.get_attribute('type') or 'text'
@@ -49,17 +48,19 @@ async def debug_page_fields(page: Page) -> None:
                 input_class = await input_el.get_attribute('class') or ''
                 input_placeholder = await input_el.get_attribute('placeholder') or ''
                 input_autocomplete = await input_el.get_attribute('autocomplete') or ''
-                
-                logger.info(f"  Input {i+1}: type='{input_type}', name='{input_name}', id='{input_id}', class='{input_class}', placeholder='{input_placeholder}', autocomplete='{input_autocomplete}'")
+
+                debug_detail(
+                    f"Input {i+1}: type='{input_type}', name='{input_name}', id='{input_id}', class='{input_class}', "
+                    f"placeholder='{input_placeholder}', autocomplete='{input_autocomplete}'"
+                )
             except Exception as e:
-                logger.debug(f"Failed to get attributes for input {i+1}: {e}")
-        
-        # Also check for any forms
+                debug_detail(f"Failed to get attributes for input {i+1}: {e}")
+
         forms = await page.query_selector_all('form')
-        logger.info(f"Found {len(forms)} forms on page")
-        
+        debug_detail(f"Found {len(forms)} forms on page")
+
     except Exception as e:
-        logger.warning(f"Failed to debug page fields: {e}")
+        debug_detail(f"Failed to debug page fields: {e}")
 
 
 async def auto_login(page: Page, creds: LoginCredentials) -> bool:
@@ -68,25 +69,31 @@ async def auto_login(page: Page, creds: LoginCredentials) -> bool:
     PASSWORD = creds.password
     TOTP_SECRET = creds.totp_secret
     
-    logger.info(f"Environment check - USERNAME: {'SET' if USERNAME else 'NOT SET'}")
-    logger.info(f"Environment check - PASSWORD: {'SET' if PASSWORD else 'NOT SET'}")
-    logger.info(f"Environment check - TOTP_SECRET: {'SET' if TOTP_SECRET else 'NOT SET'}")
+    def _flag(val: Optional[str]) -> str:
+        return "✓" if val else "✗"
+
+    logger.info(
+        "Credentials availability → USERNAME:%s PASSWORD:%s TOTP:%s",
+        _flag(USERNAME),
+        _flag(PASSWORD),
+        _flag(TOTP_SECRET),
+    )
     
     if not (USERNAME and PASSWORD):
         logger.warning("No USERNAME or PASSWORD in environment, skipping auto-login")
         return False
     
-    logger.info("Attempting automatic login...")
+    logger.info("Attempting automatic login…")
     
     # Wait for page to be fully loaded
     try:
         await page.wait_for_load_state('networkidle', timeout=10000)
-        logger.info("Page finished loading")
+        debug_detail("Page finished loading")
     except Exception as e:
         logger.warning(f"Page load timeout: {e}")
     
     # Debug current page
-    logger.info(f"Current URL: {page.url}")
+    debug_detail(f"Current URL: {page.url}")
     await debug_page_fields(page)
     
     # Check if we're already on a login page
@@ -132,7 +139,7 @@ async def auto_login(page: Page, creds: LoginCredentials) -> bool:
         'input[type="text"]:visible',
         'input:not([type]):visible'
     ]
-    logger.info(f"Trying {len(user_selectors)} username selectors...")
+    debug_detail(f"Trying {len(user_selectors)} username selectors…")
     user_ok = await fill_first_match(page, user_selectors, USERNAME)
     
     if not user_ok:
@@ -161,7 +168,7 @@ async def auto_login(page: Page, creds: LoginCredentials) -> bool:
         'input[name*="pass"]',
         'input[name*="pwd"]'
     ]
-    logger.info(f"Trying {len(password_selectors)} password selectors...")
+    debug_detail(f"Trying {len(password_selectors)} password selectors…")
     pass_ok = await fill_first_match(page, password_selectors, PASSWORD)
     
     if not pass_ok:
@@ -189,7 +196,7 @@ async def auto_login(page: Page, creds: LoginCredentials) -> bool:
             logger.warning(f"Password field not found after Next: {e}")
         
         # Debug the new page
-        logger.info(f"Password page URL: {page.url}")
+        debug_detail(f"Password page URL: {page.url}")
         await debug_page_fields(page)
         
         # Try password again with extended selectors
@@ -235,7 +242,7 @@ async def auto_login(page: Page, creds: LoginCredentials) -> bool:
         
         # Generate and enter TOTP code
         otp = gen_totp(TOTP_SECRET)
-        logger.info(f"Generated TOTP code: {otp}")
+        debug_detail(f"Generated TOTP code: {otp}")
         
         otp_ok = await fill_first_match(page, [
             # Okta-specific selectors based on observed field structure

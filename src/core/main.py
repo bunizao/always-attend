@@ -72,6 +72,7 @@ class PortalExperience:
         self.interactive = sys.stdin.isatty()
 
     def show_welcome(self) -> None:
+        self.console.clear_screen()
         self.console.banner("Always Attend Portal")
         self.console.text_block(
             "Automation assistant for attendance management. "

@@ -70,14 +70,23 @@ class PortalConsole:
 
     def _rule(self, label: str = "", *, accent: str = "blue", char: str = "═") -> str:
         label_text = f" {label} " if label else ""
-        pad = self.width - len(label_text)
-        rule_line = f"{char * max(pad, 0)}{label_text}"
+        pad_total = max(self.width - len(label_text), 0)
+        left = pad_total // 2
+        right = pad_total - left
+        rule_line = f"{char * left}{label_text}{char * right}"
         color = getattr(self.palette, accent, "")
-        return self.palette.apply(rule_line[: self.width], color)
+        line = rule_line[: self.width]
+        return self.palette.apply(line, color)
 
     # ------------------------------------------------------------------ public helpers
     def clear_line(self) -> None:
         print()
+
+    def clear_screen(self) -> None:
+        if not self.palette.disabled:
+            print("\033[2J\033[H", end="", flush=True)
+        else:
+            print("\n" * 3)
 
     def banner(self, subtitle: Optional[str] = None, *, accent: str = "cyan") -> None:
         banner = self.palette.apply(self._BANNER.strip("\n"), getattr(self.palette, accent), self.palette.bold)
@@ -148,10 +157,11 @@ class PortalConsole:
             print(self.palette.apply("Please respond with yes or no.", self.palette.yellow))
 
     def panel(self, title: str, body: Iterable[str], *, accent: str = "magenta") -> None:
-        border = self._rule(accent=accent, char="─")
-        print(border)
-        print(self.palette.apply(f"{title}", getattr(self.palette, accent), self.palette.bold))
-        print(border)
+        print(self._rule(title, accent=accent))
+        for line in body:
+            print(self._wrap(line, indent=4))
+        print(self._rule(accent=accent))
+*** End Patch
         for line in body:
             print(self._wrap(line, indent=4))
         print(border)
