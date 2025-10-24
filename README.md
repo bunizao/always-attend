@@ -64,41 +64,55 @@ Double‑click to run with the enhanced first‑time setup:
 - macOS: double‑click `Always-Attend.command`
 - Windows: double‑click `Always-Attend.bat` (or run `Always-Attend.ps1`)
 
+## 📋 Application Workflow
+
+The application follows a structured 4-step workflow with multiple execution modes:
+
+### Core Workflow
+1. **Environment Setup** - Bootstrap and install dependencies
+2. **Python Check** - Verify Python environment and packages
+3. **App Start** - Load config, privacy policy, and first-run setup
+4. **Choose Mode** - Select execution mode:
+
+### Execution Modes
+- **🔍 Stats** (`--stats`) - View attendance statistics (read-only)
+- **📤 Submit** (default) - Main workflow for code submission
+- **🔑 Login Only** (`--login-only`) - Refresh session and exit
+
+### Submit Workflow Path
+When using Submit mode, the application follows this sequence:
+1. Session Check → Sign-in if needed
+2. Submission → Dry-run or submit codes
+3. Done → Save results and exit
+
+### Login Only Workflow Path
+When using Login Only mode:
+1. Session Check → Sign-in if needed
+2. Done → Exit after refreshing session
+
+### Quick Start
+```bash
+# Basic execution
+python main.py
+
+# View statistics
+python main.py --stats
+
+# Refresh login session
+python main.py --login-only
+
+# Run specific week
+python main.py --week 4
+
+# Show browser (headed mode)
+python main.py --headed
+```
+
 What the launchers do:
 - Check for Python (and Git if available)
 - Create/activate a virtualenv and install dependencies on first run
 - Run a first‑time setup wizard (portal URL, credentials, week, browser)
 - Auto‑detect the latest week from `data/*/*.json` and set `WEEK_NUMBER`
-  - To prompt every run, set `WEEK_PROMPT=1`
-- Simplified execution: calls `python main.py` with no complex menus
-
-First‑time setup features:
-- ASCII art banner
-- Privacy policy display with consent on first run
-- University configuration, including a quick Monash Malaysia option
-- Email and password input
-- Week number configuration
-
-Notes:
-- Git is optional; if not installed, update steps are skipped
-- Chrome/Edge must be installed (uses your system browser by default)
-
-Quick start:
-```bash
-# macOS: Double‑click Always-Attend.command
-# Windows: Double‑click Always-Attend.bat
-
-# Or run directly
-python main.py
-```
-When you run it:
-- A setup wizard guides configuration if needed
-- Privacy policy is shown for awareness and consent
-- Supported universities get auto‑configuration (Monash Malaysia option available)
-- Intelligent submission: precise slot matching and optimized polling
-- If no valid session is found, a browser opens for SSO and MFA; the session is saved
-- The tool navigates to your portal and submits codes; watch logs for results
-- Optional flags: `--headed`, `--dry-run`, `--week N`
 
 Update later:
 ```bash
@@ -106,8 +120,6 @@ git pull
 ```
 
 ---
-
-See the Environment Variables section below for a full list.
 
 ## 📦 Attendance Database
 
@@ -168,38 +180,16 @@ main.py
 | Argument | Type | Description | Example |
 | --- | --- | --- | --- |
 | `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
-| `--channel` | string | System browser channel (e.g., chrome, msedge) | `--channel chrome` |
-| `--headed` | flag | Show browser UI (same as `HEADLESS=0`) | `--headed` |
-| `--dry-run` | flag | Print parsed codes without submitting | `--dry-run` |
-| `--week` | int | Submit codes for week number N | `--week 4` |
-| `--login-only` | flag | Only perform login/session refresh and exit | `--login-only` |
-| `--stats` | flag | Show attendance statistics and exit | `--stats` |
-| `--debug` | flag | Enable debug logging | `--debug` |
-| `--verbose` | flag | Enable high-detail logging (alias for `--debug`) | `--verbose` |
-| `--skip-update` | flag | Skip remote git update check before running | `--skip-update` |
-
-login.py
-
-| Argument | Type | Description | Example |
-| --- | --- | --- | --- |
-| `--portal` | string URL | Attendance portal URL (overrides `PORTAL_URL`) | `--portal https://attendance.example.edu/student/Default.aspx` |
-| `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
-| `--channel` | string | System browser channel (e.g., chrome, msedge) | `--channel chrome-beta` |
-| `--headed` | flag | Show browser UI (recommended for first login) | `--headed` |
-| `--storage-state` | string path | Path to save `storage_state.json` | `--storage-state storage_state.json` |
-| `--user-data-dir` | string path | Use a persistent browser profile directory | `--user-data-dir ~/.always-attend-profile` |
-| `--check` | flag | After saving, verify login by reopening the portal | `--check` |
-| `--check-only` | flag | Only verify current session state; do not open login | `--check-only` |
-
-submit.py
-
-| Argument | Type | Description | Example |
-| --- | --- | --- | --- |
-| `--browser` | string | Browser engine (`chromium`/`firefox`/`webkit`) | `--browser chromium` |
-| `--channel` | string | System browser channel (e.g., chrome, msedge) | `--channel msedge` |
-| `--headed` | flag | Show browser UI | `--headed` |
-| `--dry-run` | flag | Print parsed codes without submitting | `--dry-run` |
-| `--week` | int | Submit codes for week number N | `--week 6` |
+| `--channel` | string | System browser channel (chromium only: `chrome`, `chrome-beta`, `msedge`, etc.) | `--channel chrome` |
+| `--headed` | flag | Show browser UI (sets `HEADLESS=0`) | `--headed` |
+| `--dry-run` | flag | Print parsed codes and exit without submitting | `--dry-run` |
+| `--week` | int | Submit codes for a specific week (sets `WEEK_NUMBER`) | `--week 4` |
+| `--login-only` | flag | Refresh the session and exit without submitting | `--login-only` |
+| `--stats` | flag | Display cached attendance statistics and exit | `--stats` |
+| `--setup` | flag | Launch the configuration wizard interactively | `--setup` |
+| `--debug` | flag | Enable debug logging profile | `--debug` |
+| `--verbose` | flag | Enable verbose logging profile | `--verbose` |
+| `--skip-update` | flag | Skip the git update check before running | `--skip-update` |
 
 ## Environment Variables
 
