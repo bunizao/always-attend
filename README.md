@@ -119,6 +119,13 @@ Update later:
 git pull
 ```
 
+### Local Mock Portal
+- Start the simulator (JSON-backed): `PYTHONPATH=src python -m mock_portal.server --port 8000`
+- Data lives in `data/mock_units.json` (anchors `#22_Oct_25`, `#23_Oct_25`)
+- Set `PORTAL_URL=http://127.0.0.1:8000/student/Units.aspx` plus `HEADLESS=0` to watch the browser
+- Use `POST /mock/reset` to reload the JSON without restarting
+- See `docs/mock_portal.md` for the full Always Works™ run-through
+
 ---
 
 ## 📦 Attendance Database

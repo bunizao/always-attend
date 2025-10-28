@@ -220,3 +220,4 @@ attendance_stats.json
 .first_time_setup_complete
 .idea/
 .portal_state.json
+data/mock_portal.db

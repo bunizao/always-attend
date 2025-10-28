@@ -190,6 +190,13 @@ export CODES_DB_BRANCH="main"
 git pull
 ```
 
+### 本地模拟门户（JSON）
+- 启动：`PYTHONPATH=src python -m mock_portal.server --port 8000`
+- 数据：`data/mock_units.json`（包含 `#22_Oct_25`、`#23_Oct_25` 两天）
+- 运行：设置 `PORTAL_URL=http://127.0.0.1:8000/student/Units.aspx`（可加 `HEADLESS=0` 观察浏览器）
+- 重载：`POST /mock/reset` 会重新加载 JSON（无需数据库）
+- 详见 `docs/mock_portal.md`，包含 Always Works™ 验证流程
+
 ---
 
 完整环境变量列表见下文（Environment Variables）。

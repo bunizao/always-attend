@@ -425,7 +425,7 @@ def find_latest_week(course: str) -> Optional[str]:
         ]
         if not weeks:
             return None
-        return str(max(weeks))q
+        return str(max(weeks))
     except Exception:
         return None
 
