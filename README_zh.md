@@ -89,6 +89,15 @@ python main.py
 ```
 更多运行细节与可选参数见下方“快速开始（Quick Start）”章节。
 
+## 🪄 快速分享脚本（`launch.py`）
+
+只想共享一个文件给同学或在干净环境里快速启动？使用根目录的 `launch.py`：
+
+- 会询问安装目录（默认使用当前目录）
+- 自动克隆 `always-attend` 仓库，创建/更新 `.venv`，安装依赖并复制 `.env.example`
+- 提供“交互登录”“默认”“`--dry-run`”三种运行模式，并可立即调用 `main.py`
+- 适合课堂演示或临时电脑：发送 `launch.py`，在目标机器上执行 `python launch.py` 即可
+
 ## 前置条件
 
 - Python 3.11 或更高版本
@@ -189,14 +198,6 @@ export CODES_DB_BRANCH="main"
 ```bash
 git pull
 ```
-
-### 本地模拟门户（JSON）
-- 启动：`PYTHONPATH=src python -m mock_portal.server --port 8000`
-- 数据：`data/mock_units.json`（包含 `#22_Oct_25`、`#23_Oct_25` 两天）
-- 运行：设置 `PORTAL_URL=http://127.0.0.1:8000/student/Units.aspx`（可加 `HEADLESS=0` 观察浏览器）
-- 重载：`POST /mock/reset` 会重新加载 JSON（无需数据库）
-- 详见 `docs/mock_portal.md`，包含 Always Works™ 验证流程
-
 ---
 
 完整环境变量列表见下文（Environment Variables）。

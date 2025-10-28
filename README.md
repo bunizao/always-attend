@@ -64,6 +64,15 @@ Double‑click to run with the enhanced first‑time setup:
 - macOS: double‑click `Always-Attend.command`
 - Windows: double‑click `Always-Attend.bat` (or run `Always-Attend.ps1`)
 
+## 🪄 Quick Share Launcher (`launch.py`)
+
+Want to drop a single file on another machine and get going? Run the bundled `launch.py` script:
+
+- Prompts for the install location (defaults to the current folder)
+- Clones `always-attend`, creates/updates `.venv`, installs dependencies, and copies `.env.example`
+- Lets you choose UI login, headless mode, or `--dry-run`, then runs `main.py` or prints the launch command
+- Perfect for rapid sharing in chats or classrooms—just send `launch.py`, then run `python launch.py`
+
 ## 📋 Application Workflow
 
 The application follows a structured 4-step workflow with multiple execution modes:
@@ -118,13 +127,6 @@ Update later:
 ```bash
 git pull
 ```
-
-### Local Mock Portal
-- Start the simulator (JSON-backed): `PYTHONPATH=src python -m mock_portal.server --port 8000`
-- Data lives in `data/mock_units.json` (anchors `#22_Oct_25`, `#23_Oct_25`)
-- Set `PORTAL_URL=http://127.0.0.1:8000/student/Units.aspx` plus `HEADLESS=0` to watch the browser
-- Use `POST /mock/reset` to reload the JSON without restarting
-- See `docs/mock_portal.md` for the full Always Works™ run-through
 
 ---
 
