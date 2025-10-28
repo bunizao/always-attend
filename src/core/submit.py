@@ -32,6 +32,7 @@ from utils.logger import logger, step, progress, success, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from core.stats import StatsManager
+from utils.browser_detection import is_browser_channel_available
 
 def to_base(origin_url: str) -> str:
     pu = urlparse(origin_url)
@@ -576,16 +577,27 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     browser_name = os.getenv("BROWSER", "chromium")
     # Default to system browsers to avoid Chromium download
     channel = os.getenv("BROWSER_CHANNEL")
-    if not channel and browser_name == "chromium":
-        # Try system browsers first: Chrome, Edge, then fallback to Chromium
-        import platform
-        system = platform.system().lower()
-        if system == "darwin":  # macOS
-            channel = "chrome"  # Try Chrome first, then default Chromium
-        elif system == "windows":
-            channel = "msedge"  # Try Edge first on Windows
-        elif system == "linux":
-            channel = "chrome"  # Try Chrome first on Linux
+    if browser_name == "chromium":
+        if channel:
+            if not is_browser_channel_available(channel):
+                logger.info(
+                    "Requested browser channel '%s' is unavailable; falling back to bundled Chromium.",
+                    channel,
+                )
+                logger.info("Run 'python -m playwright install chromium' if the bundled browser is missing.")
+                channel = None
+        else:
+            if is_browser_channel_available("chrome"):
+                channel = "chrome"
+            elif is_browser_channel_available("msedge"):
+                channel = "msedge"
+            else:
+                logger.info(
+                    "No system Chrome or Edge detected. "
+                    "Playwright's managed Chromium will be used. "
+                    "Run 'python -m playwright install chromium' if it has not been installed."
+                )
+                channel = None
     headless_env = os.getenv("HEADLESS", "1")
     headed = (headless_env in ("0", "false", "False"))
     storage_state = os.getenv("STORAGE_STATE", "storage_state.json")

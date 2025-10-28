@@ -29,6 +29,7 @@ from utils.session import is_storage_state_effective
 from utils.playwright_helpers import fill_first_match, click_first_match, maybe_switch_to_code_factor
 from utils.totp import gen_totp
 from core.browser_controller import BrowserConfig, BrowserController
+from utils.browser_detection import is_browser_channel_available
 
 
 @dataclass
@@ -525,10 +526,14 @@ async def check_session(check_url: str,
 def main():
     load_env(os.getenv("ENV_FILE", ".env"))
 
+    default_channel = os.getenv("BROWSER_CHANNEL")
+    if not default_channel and is_browser_channel_available("chrome"):
+        default_channel = "chrome"
+
     parser = argparse.ArgumentParser(description="Interactive Okta login helper (saves session state)")
     parser.add_argument("--portal", default=os.getenv("PORTAL_URL", ""), help="Portal URL (e.g., https://attendance.example.com/student/Default.aspx)")
     parser.add_argument("--browser", default=os.getenv("BROWSER", "chromium"), choices=["chromium", "firefox", "webkit"], help="Browser engine")
-    parser.add_argument("--channel", default=os.getenv("BROWSER_CHANNEL", "chrome"), help="Chromium channel: chrome|chrome-beta|msedge|msedge-beta")
+    parser.add_argument("--channel", default=default_channel, help="Chromium channel: chrome|chrome-beta|msedge|msedge-beta")
     parser.add_argument("--headed", action="store_true", help="Show browser UI (recommended)")
     parser.add_argument("--storage-state", default=os.getenv("STORAGE_STATE", "storage_state.json"), help="Path to save storage_state.json")
     parser.add_argument("--user-data-dir", default=os.getenv("USER_DATA_DIR"), help="Persistent profile directory (optional)")
@@ -548,11 +553,20 @@ def main():
         else:
             headed = (env_headless in ("0", "false", "False"))
 
+    channel = args.channel
+    if args.browser == "chromium" and channel and not is_browser_channel_available(channel):
+        logger.info(
+            "Requested browser channel '%s' is unavailable; falling back to bundled Chromium.",
+            channel,
+        )
+        logger.info("Run 'python -m playwright install chromium' if the bundled browser is missing.")
+        channel = None
+
     if args.check_only:
         ok = asyncio.run(check_session(
             check_url=args.portal,
             browser_name=args.browser,
-            channel=args.channel,
+            channel=channel,
             headed=False,
             storage_state=args.storage_state,
             user_data_dir=args.user_data_dir,
@@ -566,7 +580,7 @@ def main():
     asyncio.run(run_login(
         portal_url=args.portal,
         browser_name=args.browser,
-        channel=args.channel,
+        channel=channel,
         headed=headed,
         storage_state=args.storage_state,
         user_data_dir=args.user_data_dir,
@@ -576,7 +590,7 @@ def main():
         ok = asyncio.run(check_session(
             check_url=args.portal,
             browser_name=args.browser,
-            channel=args.channel,
+            channel=channel,
             headed=False,
             storage_state=args.storage_state,
             user_data_dir=args.user_data_dir,

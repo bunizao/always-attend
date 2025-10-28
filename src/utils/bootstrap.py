@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+from utils.browser_detection import is_browser_channel_available
+
 
 class BootstrapError(RuntimeError):
     pass
@@ -92,6 +94,10 @@ def _ensure_playwright_assets(project_root: Path) -> None:
     flag_path = venv_path / "playwright_chromium_installed.flag"
     if flag_path.exists():
         return
+    preferred_channel = os.getenv("BROWSER_CHANNEL", "chrome").lower()
+    if preferred_channel in {"chrome", "chrome-beta", "chrome-canary", "msedge", "msedge-beta"}:
+        if is_browser_channel_available(preferred_channel):
+            return
     _run([str(python_exe), "-m", "playwright", "install", "chromium"], project_root)
     flag_path.touch()
 

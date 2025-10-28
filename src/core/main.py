@@ -32,6 +32,7 @@ from utils.logger import logger, step, success, set_log_profile
 from utils.session import is_storage_state_effective
 from config.config_wizard import ConfigWizard
 from utils.console import PortalConsole
+from utils.browser_detection import is_browser_channel_available
 
 
 def _ensure_env_file(env_file: str) -> None:
@@ -199,7 +200,31 @@ async def _ensure_session(headed_default: bool) -> None:
         raise RuntimeError("Missing PORTAL_URL in environment or .env")
 
     browser = os.getenv("BROWSER", "chromium")
-    channel = os.getenv("BROWSER_CHANNEL", "chrome")
+    channel_env = os.getenv("BROWSER_CHANNEL")
+    channel: Optional[str]
+    if browser == "chromium":
+        if channel_env:
+            if not is_browser_channel_available(channel_env):
+                logger.info(
+                    "Requested browser channel '%s' is unavailable; falling back to bundled Chromium.",
+                    channel_env,
+                )
+                channel = None
+            else:
+                channel = channel_env
+        else:
+            if is_browser_channel_available("chrome"):
+                channel = "chrome"
+            else:
+                channel = None
+                logger.info(
+                    "System Chrome was not detected. "
+                    "Playwright's managed Chromium will be used instead. "
+                    "Run 'python -m playwright install chromium' if it is not already installed."
+                )
+    else:
+        channel = channel_env
+
     storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
     user_data_dir = os.getenv("USER_DATA_DIR")
 
