@@ -24,8 +24,11 @@ import importlib
 import sys
 import subprocess
 import logging
+import threading
 from pathlib import Path
 from typing import Optional, Dict
+
+from pathlib import Path
 
 from utils.env_utils import load_env, ensure_env_file, append_to_env_file
 from utils.logger import logger, step, success, set_log_profile
@@ -270,11 +273,8 @@ async def _run_submit(dry_run: bool, target_email: Optional[str] = None) -> None
 
 def main():
     load_env(os.getenv('ENV_FILE', '.env'))
-
-    experience = PortalExperience()
-    experience.show_welcome()
-    experience.ensure_privacy_notice()
-    experience.configure_language()
+    codes_root = Path(os.getenv('CODES_DB_PATH', 'data')).expanduser().resolve()
+    logger.debug("Using codes directory: %s", codes_root)
 
     parser = argparse.ArgumentParser(
         description="Always-attend: auto login + submit with storage_state check"
@@ -292,6 +292,27 @@ def main():
     parser.add_argument("--skip-update", action="store_true", help="Skip remote update check")
     args = parser.parse_args()
 
+    if args.skip_update:
+        os.environ['SKIP_UPDATE_CHECK'] = '1'
+
+    experience = PortalExperience()
+
+    update_thread: Optional[threading.Thread] = None
+    if not args.setup and not args.skip_update:
+
+        def _run_update_check() -> None:
+            try:
+                check_for_updates()
+            except Exception as exc:
+                logger.debug("Update check failed: %s", exc)
+
+        update_thread = threading.Thread(target=_run_update_check, name="update-check", daemon=True)
+        update_thread.start()
+
+    experience.show_welcome()
+    experience.ensure_privacy_notice()
+    experience.configure_language()
+
     # Run configuration wizard if requested or on first run
     if args.setup or ConfigWizard.should_run_wizard():
         if args.setup or ConfigWizard.prompt_user_for_wizard():
@@ -303,11 +324,8 @@ def main():
             ConfigWizard.mark_setup_complete()
             logger.info("Skipping configuration wizard; re-run with --setup when needed.")
 
-    if args.skip_update:
-        os.environ['SKIP_UPDATE_CHECK'] = '1'
-
-    if not args.setup:
-        check_for_updates()
+    if update_thread:
+        update_thread.join()
 
     if args.browser:
         os.environ['BROWSER'] = args.browser

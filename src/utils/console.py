@@ -26,6 +26,13 @@ import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
+# Import animation utilities
+try:
+    from .animations import TypewriterBanner, AnimationConfig
+    ANIMATIONS_AVAILABLE = True
+except ImportError:
+    ANIMATIONS_AVAILABLE = False
+
 __all__ = ["PortalConsole", "ConsolePalette"]
 
 
@@ -131,6 +138,15 @@ class PortalConsole:
             print("\n" * 3)
 
     def banner(self, subtitle: Optional[str] = None, *, accent: str = "monash") -> None:
+        # Use new typewriter banner if available
+        if ANIMATIONS_AVAILABLE:
+            config = AnimationConfig()
+            if config.enabled and config.style == "fancy":
+                typewriter = TypewriterBanner(config)
+                typewriter.display(subtitle)
+                return
+
+        # Fall back to original implementation
         self._play_banner_animation(accent)
         color = getattr(self.palette, accent, "")
         for raw_line in self._BANNER.strip("\n").splitlines():

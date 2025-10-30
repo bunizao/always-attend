@@ -2,3 +2,4 @@
 playwright>=1.54.0
 pyotp==2.9.0
 aiohttp>=3.8.0
+rich>=13.0.0

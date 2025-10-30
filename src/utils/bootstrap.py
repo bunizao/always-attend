@@ -68,7 +68,7 @@ def _ensure_dependencies(project_root: Path) -> None:
     if not python_exe.exists():
         raise BootstrapError("Virtual environment interpreter missing at {}".format(python_exe))
 
-    required_modules = ("playwright", "pyotp", "aiohttp")
+    required_modules = ("playwright", "pyotp", "aiohttp", "rich")
     flag_path = venv_path / "requirements_installed.flag"
 
     needs_install = not flag_path.exists()

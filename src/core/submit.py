@@ -22,7 +22,7 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Callable
 from urllib.parse import urlparse, urlunparse
 import argparse
 import re
@@ -35,13 +35,23 @@ from utils.session import is_storage_state_effective
 from core.stats import StatsManager
 from utils.browser_detection import is_browser_channel_available
 
+try:
+    from utils.simple_progress import ProgressTracker, TaskInfo, create_task_list_from_targets
+    SIMPLE_PROGRESS_AVAILABLE = True
+except ImportError:
+    SIMPLE_PROGRESS_AVAILABLE = False
+    ProgressTracker = TaskInfo = None  # type: ignore
+    def create_task_list_from_targets(*args, **kwargs):  # type: ignore
+        return []
+
 def to_base(origin_url: str) -> str:
     pu = urlparse(origin_url)
     return urlunparse((pu.scheme, pu.netloc, "", "", "", ""))
 
 
 def _data_root() -> Path:
-    return Path(os.getenv("CODES_DB_PATH", "data")).resolve()
+    raw = os.getenv("CODES_DB_PATH", "data")
+    return Path(raw).expanduser().resolve()
 
 
 MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
@@ -444,6 +454,7 @@ async def _submit_codes_for_target(
     ordered_codes: List[str],
     used_codes: Set[str],
     used_codes_lock: asyncio.Lock,
+    progress_tracker: Optional[ProgressTracker] = None,
 ) -> SubmissionOutcome:
     async with used_codes_lock:
         candidate_codes = _build_candidate_codes(target.slot_norm, slot_code_map, ordered_codes, used_codes)
@@ -457,9 +468,16 @@ async def _submit_codes_for_target(
     success_code: Optional[str] = None
     label = _format_progress_label(target.course_code, target.slot_label)
 
+    if progress_tracker:
+        progress_tracker.start_code_progress(target.course_code, target.slot_label, total)
+
     for idx, code in enumerate(candidate_codes, start=1):
         attempts += 1
-        progress(f"{label}: {idx}/{total}")
+        if progress_tracker:
+            progress_tracker.update_code_progress(idx)
+            progress_tracker.update_status("Opening entry…")
+        else:
+            progress(f"{label}: {idx}/{total}")
 
         opened = await _open_target_entry(page, base_url, target)
         if not opened:
@@ -468,9 +486,18 @@ async def _submit_codes_for_target(
             opened = await open_entry_for_course(page, base_url, target.course_code)
         if not opened:
             logger.warning(f"Unable to open entry for {target.course_code} {target.slot_label}")
-            break
+            if progress_tracker:
+                progress_tracker.update_status("Entry unavailable")
+                progress_tracker.complete_code_progress(False)
+            return SubmissionOutcome(target=target, attempts=attempts, success=False, code=None)
 
-        ok, _ = await submit_code_on_entry(page, code)
+        if progress_tracker:
+            progress_tracker.update_status("Submitting code…")
+        ok, _ = await submit_code_on_entry(
+            page,
+            code,
+            status_cb=(progress_tracker.update_status if progress_tracker else None),
+        )
 
         try:
             await page.goto(f"{base_url}/student/Units.aspx", timeout=20000)
@@ -478,15 +505,25 @@ async def _submit_codes_for_target(
             pass
 
         verified = await verify_entry_mark(page, base_url, target.anchor, target.course_code, target.slot_label)
-        if ok and verified:
-            async with used_codes_lock:
-                used_codes.add(code)
-            progress(f"{label}: {total}/{total}")
+        if ok and not verified:
+            logger.debug("Submission for %s %s succeeded but tick not confirmed", target.course_code, target.slot_label)
+        if ok:
+            if progress_tracker:
+                progress_tracker.update_status("Success ✓")
+                progress_tracker.update_code_progress(total)
+                progress_tracker.complete_code_progress(True, code)
+            else:
+                progress(f"{label}: {total}/{total}")
             logger.info(f"✓ {target.course_code} {target.slot_label}: {code}")
             success_code = code
             return SubmissionOutcome(target=target, attempts=attempts, success=True, code=success_code)
 
-    logger.warning(f"No codes succeeded for {target.course_code} {target.slot_label} after {attempts} attempts")
+    if progress_tracker:
+        progress_tracker.update_status("Failed")
+        progress_tracker.update_code_progress(min(attempts, total))
+        progress_tracker.complete_code_progress(False)
+    else:
+        logger.warning(f"No codes succeeded for {target.course_code} {target.slot_label} after {attempts} attempts")
     return SubmissionOutcome(target=target, attempts=attempts, success=False, code=None)
 
 
@@ -678,15 +715,20 @@ async def verify_entry_mark(page: Page, base_url: str, anchor: Optional[str], co
         else:
             root = page
 
-        # success if li mentioning course+slot has tick icon
-        item = root.locator('li').filter(
+        slot_norm = _normalize_slot_text(slot_label)
+
+        li_nodes = root.locator('li').filter(
             has_text=re.compile(re.escape(course_code), re.I)
-        ).filter(
-            has_text=re.compile(re.escape(slot_label), re.I)
         )
-        # require tick.png in this item
-        if await item.locator('img[src*="tick"]').count() > 0:
-            return True
+        count = await li_nodes.count()
+        for idx in range(count):
+            li = li_nodes.nth(idx)
+            text = (await li.inner_text()).strip()
+            text_norm = _normalize_slot_text(text)
+            if slot_norm and slot_norm not in text_norm:
+                continue
+            if await li.locator('img[src*="tick"]').count() > 0:
+                return True
         return False
     except Exception:
         return False
@@ -719,10 +761,11 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
 
     course_clean = ''.join(ch for ch in course_code if ch.isalnum())
     week_clean = ''.join(ch for ch in str(week_number) if ch.isdigit())
-    data_path = _data_root() / course_clean / f'{week_clean}.json'
+    data_root = _data_root()
+    data_path = data_root / course_clean / f'{week_clean}.json'
 
     if not data_path.exists():
-        logger.warning(f"No attendance codes found for {course_code} week {week_number}.")
+        logger.warning(f"No attendance codes found for {course_code} week {week_number} (expected at {data_path}).")
         return []
 
     try:
@@ -756,7 +799,7 @@ async def is_authenticated(page: Page) -> bool:
         return True  # Assume authenticated if check fails
 
 
-async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
+async def submit_code_on_entry(page: Page, code: str, status_cb: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
     """Submit a single attendance code on the current entry page."""
     try:
         # Find and fill the code input field
@@ -802,7 +845,10 @@ async def submit_code_on_entry(page: Page, code: str) -> Tuple[bool, str]:
             return False, "Could not find submit button"
         
         # Wait for response and check result
-        progress("Waiting for server response...")
+        if status_cb:
+            status_cb("Waiting for server response…")
+        else:
+            progress("Waiting for server response...")
         await asyncio.sleep(2)
         
         # Check for success/error messages
@@ -884,6 +930,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
     
     stats = StatsManager()
+    progress_tracker = ProgressTracker() if SIMPLE_PROGRESS_AVAILABLE else None
     
     async with async_playwright() as p:
         if browser_name == "webkit":
@@ -967,33 +1014,23 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                         if not codes:
                             return
                         # Preview items (no confirmation required)
-                        logger.info("The following items will be processed:")
-                        for entry in codes:
-                            slot_label = entry.get('slot', 'Unknown')
-                            code = entry.get('code', 'Missing')
-                            logger.info(f"{slot_label}, code {code}")
-
-                        # Show local JSON path and raw URL if applicable
-                        course_clean = ''.join(ch for ch in course if ch.isalnum())
-                        week_clean = ''.join(ch for ch in str(wk) if ch.isdigit())
-                        rel_path = os.path.join('data', course_clean, f'{week_clean}.json')
-                        if os.path.exists(rel_path):
-                            logger.info(f"Generated codes JSON: {rel_path}")
-                            raw_url = _compute_raw_url_for_path(rel_path)
-                            if raw_url:
-                                logger.info(f"Raw URL: {raw_url}")
+                        # Verbose previews removed; rely on Rich task list instead
                         courses_processed.append(course)
 
                         slot_code_map: Dict[str, List[str]] = {}
+                        slot_label_map: Dict[str, str] = {}
                         ordered_codes: List[str] = []
                         for entry in codes:
                             code_val = (entry.get('code') or '').strip()
                             if not code_val:
                                 continue
                             ordered_codes.append(code_val)
-                            slot_norm = _normalize_slot_text(entry.get('slot') or '')
+                            raw_slot = (entry.get('slot') or '').strip()
+                            slot_norm = _normalize_slot_text(raw_slot)
                             if slot_norm:
                                 slot_code_map.setdefault(slot_norm, [])
+                                clean_slot = re.sub(r"\s+", " ", raw_slot)
+                                slot_label_map.setdefault(slot_norm, clean_slot if clean_slot else "Unknown")
                                 if code_val not in slot_code_map[slot_norm]:
                                     slot_code_map[slot_norm].append(code_val)
                         ordered_codes = _dedupe_preserve(ordered_codes)
@@ -1002,6 +1039,26 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                             logger.info(
                                 f"[DRY RUN] Would submit {len(ordered_codes)} codes across {len(slot_code_map)} slots for {course} week {wk}"
                             )
+                            if SIMPLE_PROGRESS_AVAILABLE and progress_tracker:
+                                dry_tasks = [
+                                    TaskInfo(
+                                        course=course,
+                                        slot=slot_label_map.get(norm, norm),
+                                        total_codes=len(code_list),
+                                    )
+                                    for norm, code_list in slot_code_map.items()
+                                ]
+                                if dry_tasks:
+                                    progress_tracker.print_task_list(dry_tasks)
+                                    for task in dry_tasks:
+                                        progress_tracker.start_code_progress(task.course, task.slot, task.total_codes)
+                                        progress_tracker.update_status("Simulating…")
+                                        for idx in range(1, task.total_codes + 1):
+                                            await asyncio.sleep(0.02)
+                                            progress_tracker.update_code_progress(idx)
+                                        progress_tracker.update_status("Simulated ✓")
+                                        progress_tracker.update_code_progress(task.total_codes)
+                                        progress_tracker.complete_code_progress(True, "simulated")
                             return
 
                         used_codes: Set[str] = set()
@@ -1024,6 +1081,28 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                                 await target_page.close()
                             except Exception:
                                 pass
+                            return
+
+                        task_list: List[TaskInfo] = []
+                        if SIMPLE_PROGRESS_AVAILABLE and progress_tracker:
+                            task_list = create_task_list_from_targets(targets, slot_code_map, ordered_codes)
+                            if task_list:
+                                progress_tracker.print_task_list(task_list)
+
+                        if dry_run:
+                            logger.info(
+                                f"[DRY RUN] Would submit {len(ordered_codes)} codes across {len(slot_code_map)} slots for {course} week {wk}"
+                            )
+                            if SIMPLE_PROGRESS_AVAILABLE and progress_tracker and task_list:
+                                for task in task_list:
+                                    progress_tracker.start_code_progress(task.course, task.slot, task.total_codes)
+                                    progress_tracker.update_status("Simulating…")
+                                    for idx in range(1, task.total_codes + 1):
+                                        await asyncio.sleep(0.02)
+                                        progress_tracker.update_code_progress(idx)
+                                    progress_tracker.update_status("Simulated ✓")
+                                    progress_tracker.update_code_progress(task.total_codes)
+                                    progress_tracker.complete_code_progress(True, "simulated")
                             return
 
                         logger.info(f"Pending attendance entries for {course}: {len(targets)}")
@@ -1051,6 +1130,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                                             ordered_codes,
                                             used_codes,
                                             used_codes_lock,
+                                            progress_tracker,
                                         )
                                         outcomes.append(outcome)
                                     except Exception as exc:
@@ -1081,6 +1161,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                                             ordered_codes,
                                             used_codes,
                                             used_codes_lock,
+                                            progress_tracker,
                                         )
                                     except Exception as exc:
                                         logger.debug(f"Error processing {t.course_code} {t.slot_label}: {exc}")
@@ -1123,6 +1204,8 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                 pass
         
         finally:
+            if progress_tracker:
+                progress_tracker.stop()
             await browser.close()
 
 

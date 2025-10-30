@@ -171,22 +171,103 @@ logger = _configure_base_logger()
 
 
 # ---------------------------------------------------------------------------
+# Animation support
+
+try:
+    from utils.animations import AnimationConfig
+    ANIMATIONS_AVAILABLE = True
+except ImportError:
+    ANIMATIONS_AVAILABLE = False
+
+
+def _animate_text_output(text: str, delay: float = 0.008) -> None:
+    """Animate text output using Rich live updates to avoid ANSI artifacts."""
+    if not ANIMATIONS_AVAILABLE:
+        print(text, flush=True)
+        return
+
+    config = AnimationConfig()
+    if not config.enabled or config.style == "minimal":
+        print(text, flush=True)
+        return
+
+    try:
+        from rich.console import Console
+        from rich.live import Live
+        from rich.text import Text
+    except ImportError:
+        print(text, flush=True)
+        return
+
+    import time
+
+    console = Console()
+    buffer = text[0:0]
+    renderable = Text("", no_wrap=True)
+
+    refresh_hz = 1.0 / max(delay, 0.004) if delay else 60.0
+
+    with Live(renderable, console=console, refresh_per_second=min(120, int(refresh_hz)), transient=False) as live:
+        for char in text:
+            buffer += char
+            renderable = Text.from_ansi(buffer)
+            renderable.no_wrap = True
+            live.update(renderable)
+            if char.strip() and delay:
+                time.sleep(delay)
+    console.line()
+
+
+def _enhanced_log_message(message: str, layer: str, animate: bool = True) -> None:
+    """Enhanced logging with optional animation effects."""
+    if not ANIMATIONS_AVAILABLE or not animate:
+        logger.log(logging.INFO, message, layer=layer)
+        return
+
+    config = AnimationConfig()
+    if not config.enabled or config.style != "fancy":
+        logger.log(logging.INFO, message, layer=layer)
+        return
+
+    # Get layer formatting
+    mapping = LayeredFormatter.LAYER_MAPPINGS.get(layer, LayeredFormatter.LAYER_MAPPINGS["user"])
+    icon = mapping["icon"]
+    style = mapping["style"]
+
+    # Create formatted message manually for animation
+    prefix = _apply_color(icon, *style)
+    formatted_message = f"{prefix} {message}"
+
+    # Animate the output
+    _animate_text_output(formatted_message, config.char_delay * 0.8)  # Slightly faster than banner
+
+
+# ---------------------------------------------------------------------------
 # Public helpers
 
 
-def step(message: str) -> None:
-    """Log a major step in the workflow."""
-    logger.log(logging.INFO, message, layer="step")
+def step(message: str, *, animated: bool = True) -> None:
+    """Log a major step in the workflow with optional animation."""
+    if animated and ANIMATIONS_AVAILABLE:
+        _enhanced_log_message(message, "step", animate=True)
+    else:
+        logger.log(logging.INFO, message, layer="step")
 
 
-def progress(message: str) -> None:
-    """Log a short-lived progress update."""
-    logger.log(logging.INFO, message, layer="progress")
+def progress(message: str, *, animated: bool = True) -> None:
+    """Log a short-lived progress update with optional animation."""
+    if animated and ANIMATIONS_AVAILABLE:
+        _enhanced_log_message(message, "progress", animate=True)
+    else:
+        logger.log(logging.INFO, message, layer="progress")
 
 
-def success(message: str) -> None:
-    """Log successful completion of an action."""
-    logger.log(logging.INFO, message, layer="success")
+def success(message: str, *, animated: bool = True) -> None:
+    """Log successful completion of an action with optional animation."""
+    if animated and ANIMATIONS_AVAILABLE:
+        _enhanced_log_message(message, "success", animate=True)
+    else:
+        logger.log(logging.INFO, message, layer="success")
 
 
 def debug_detail(message: str) -> None:
