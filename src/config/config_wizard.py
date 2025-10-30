@@ -21,6 +21,7 @@ import os
 import sys
 import shutil
 import getpass
+from pathlib import Path
 from typing import Dict, Optional
 
 from utils.logger import logger
@@ -70,6 +71,7 @@ class ConfigWizard:
         print("\nOr test with dry run:")
         print("  python main.py --dry-run")
         
+        self.mark_setup_complete()
         return True
         
     def _ensure_env_file(self) -> None:
@@ -299,6 +301,14 @@ class ConfigWizard:
         except EOFError:
             # Non-interactive environment, skip wizard
             return False
+
+    @staticmethod
+    def mark_setup_complete(flag_path: str = ".first_time_setup_complete") -> None:
+        """Persist a sentinel file so the wizard runs only once."""
+        try:
+            Path(flag_path).touch(exist_ok=True)
+        except Exception as exc:
+            logger.warning("Unable to mark setup completion: %s", exc)
 
 
 def main():

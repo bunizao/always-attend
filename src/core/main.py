@@ -299,6 +299,9 @@ def main():
             wizard = ConfigWizard()
             wizard.run()
             load_env(os.getenv('ENV_FILE', '.env'))
+        else:
+            ConfigWizard.mark_setup_complete()
+            logger.info("Skipping configuration wizard; re-run with --setup when needed.")
 
     if args.skip_update:
         os.environ['SKIP_UPDATE_CHECK'] = '1'
