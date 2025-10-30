@@ -42,7 +42,9 @@ class StatsManager:
                 "daily_stats": {},
                 "weekly_stats": {},
                 "last_run": None,
-                "first_run": None
+                "first_run": None,
+                "total_code_attempts": 0,
+                "total_successful_codes": 0,
             }
         
         try:
@@ -59,7 +61,9 @@ class StatsManager:
                 "daily_stats": {},
                 "weekly_stats": {},
                 "last_run": None,
-                "first_run": None
+                "first_run": None,
+                "total_code_attempts": 0,
+                "total_successful_codes": 0,
             }
 
     def _save_stats(self) -> None:
@@ -70,13 +74,30 @@ class StatsManager:
         except Exception as e:
             logger.error(f"Failed to save stats: {e}")
 
-    def record_run(self, success: bool, courses_processed: List[str], 
-                   codes_submitted: Dict[str, int], errors: List[str] = None) -> None:
+    def record_run(
+        self,
+        success: bool,
+        courses_processed: List[str],
+        codes_submitted: Dict[str, int],
+        errors: List[str] = None,
+        attempts: Optional[Dict[str, int]] = None,
+        success_codes: Optional[Dict[str, List[str]]] = None,
+    ) -> None:
         """Record a run's statistics."""
         now = datetime.now()
         today = now.strftime("%Y-%m-%d")
         week = now.strftime("%Y-W%U")
-        
+
+        attempts = attempts or {}
+        success_codes = success_codes or {}
+        total_attempts_run = sum(attempts.values())
+        total_success_codes = sum(len(v) for v in success_codes.values())
+
+        self.stats_data.setdefault("total_code_attempts", 0)
+        self.stats_data.setdefault("total_successful_codes", 0)
+        self.stats_data["total_code_attempts"] += total_attempts_run
+        self.stats_data["total_successful_codes"] += total_success_codes
+
         # Update basic counters
         self.stats_data["total_runs"] += 1
         if success:
@@ -95,34 +116,46 @@ class StatsManager:
                 "runs": 0,
                 "successful": 0,
                 "codes_submitted": 0,
-                "courses": []
+                "courses": [],
+                "code_attempts": 0,
+                "codes_successful": 0,
             }
-        
+
         daily = self.stats_data["daily_stats"][today]
+        daily.setdefault("code_attempts", 0)
+        daily.setdefault("codes_successful", 0)
         daily["runs"] += 1
         if success:
             daily["successful"] += 1
         daily["codes_submitted"] += sum(codes_submitted.values())
         daily["courses"].extend(courses_processed)
         daily["courses"] = list(set(daily["courses"]))
-        
+        daily["code_attempts"] += total_attempts_run
+        daily["codes_successful"] += total_success_codes
+
         # Update weekly stats
         if week not in self.stats_data["weekly_stats"]:
             self.stats_data["weekly_stats"][week] = {
                 "runs": 0,
                 "successful": 0,
                 "codes_submitted": 0,
-                "courses": []
+                "courses": [],
+                "code_attempts": 0,
+                "codes_successful": 0,
             }
-        
+
         weekly = self.stats_data["weekly_stats"][week]
+        weekly.setdefault("code_attempts", 0)
+        weekly.setdefault("codes_successful", 0)
         weekly["runs"] += 1
         if success:
             weekly["successful"] += 1
         weekly["codes_submitted"] += sum(codes_submitted.values())
         weekly["courses"].extend(courses_processed)
         weekly["courses"] = list(set(weekly["courses"]))
-        
+        weekly["code_attempts"] += total_attempts_run
+        weekly["codes_successful"] += total_success_codes
+
         # Update course-specific stats
         for course in courses_processed:
             if course not in self.stats_data["courses"]:
@@ -131,9 +164,11 @@ class StatsManager:
                     "successful_runs": 0,
                     "codes_submitted": 0,
                     "last_processed": None,
-                    "first_processed": None
+                    "first_processed": None,
+                    "total_attempts": 0,
+                    "successful_codes": [],
                 }
-            
+
             course_stats = self.stats_data["courses"][course]
             course_stats["total_runs"] += 1
             if success:
@@ -142,7 +177,14 @@ class StatsManager:
             course_stats["last_processed"] = now.isoformat()
             if not course_stats["first_processed"]:
                 course_stats["first_processed"] = now.isoformat()
-        
+            course_stats.setdefault("total_attempts", 0)
+            course_stats.setdefault("successful_codes", [])
+            course_stats["total_attempts"] += attempts.get(course, 0)
+            if course in success_codes:
+                course_stats["successful_codes"].extend(success_codes[course])
+                # De-duplicate while preserving order, keep last 20
+                course_stats["successful_codes"] = list(dict.fromkeys(course_stats["successful_codes"]))[-20:]
+
         # Record errors if any
         if errors:
             if "recent_errors" not in self.stats_data:
@@ -178,7 +220,9 @@ class StatsManager:
             recent_days.append({
                 "date": date,
                 "runs": daily_data.get("runs", 0),
-                "codes": daily_data.get("codes_submitted", 0)
+                "codes": daily_data.get("codes_submitted", 0),
+                "attempts": daily_data.get("code_attempts", 0),
+                "hits": daily_data.get("codes_successful", 0),
             })
         
         return {
@@ -187,7 +231,9 @@ class StatsManager:
                 "successful_runs": self.stats_data["successful_runs"],
                 "failed_runs": self.stats_data["failed_runs"],
                 "success_rate": round(success_rate, 2),
-                "total_codes_submitted": total_codes
+                "total_codes_submitted": total_codes,
+                "total_code_attempts": self.stats_data.get("total_code_attempts", 0),
+                "total_successful_codes": self.stats_data.get("total_successful_codes", total_codes),
             },
             "timeline": {
                 "first_run": self.stats_data["first_run"],
@@ -214,6 +260,8 @@ class StatsManager:
         print(f"  Failed: {overview['failed_runs']}")
         print(f"  Success Rate: {overview['success_rate']}%")
         print(f"  Total Codes Submitted: {overview['total_codes_submitted']}")
+        print(f"  Code Attempts: {overview['total_code_attempts']}")
+        print(f"  Successful Codes: {overview['total_successful_codes']}")
         
         # Timeline
         timeline = summary["timeline"]

@@ -262,6 +262,8 @@ submit.py
 | `CODES_DB_REPO` | string URL | 否 | 同步到本地的 Git 仓库地址 | `git@github.com:you/attendance-db.git` |
 | `CODES_DB_BRANCH` | string | 否 | 同步使用的分支 | `main` |
 | `WEEK_NUMBER` | int | 否 | 指定周次（否则自动检测最新周） | `4` |
+| `SUBMIT_CONCURRENCY` | int | 否 | 同时处理的课程数量上限 | `2` |
+| `SUBMIT_TARGET_CONCURRENCY` | int | 否 | 单课程内并行提交任务数 | `3` |
 | `USERNAME` | string | 否 | Okta 用户名（自动登录） | `student@example.edu` |
 | `PASSWORD` | string | 否 | Okta 密码（自动登录） | `correcthorsebattery` |
 | `TOTP_SECRET` | string（base32） | 否 | MFA TOTP 秘钥（自动登录） | `JBSWY3DPEHPK3PXP` |

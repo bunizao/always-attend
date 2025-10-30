@@ -209,6 +209,8 @@ main.py
 | `CODES_DB_REPO` | string URL | No | Git repository that mirrors the data tree | `git@github.com:you/attendance-db.git` |
 | `CODES_DB_BRANCH` | string | No | Branch to checkout when syncing the repository | `main` |
 | `WEEK_NUMBER` | int | No | Force a specific week instead of auto-detecting | `4` |
+| `SUBMIT_CONCURRENCY` | int | No | Maximum courses processed concurrently | `2` |
+| `SUBMIT_TARGET_CONCURRENCY` | int | No | Parallel submission workers per course | `3` |
 | `USERNAME` | string | No | Okta username for auto-login | `student@example.edu` |
 | `PASSWORD` | string | No | Okta password for auto-login | `correcthorsebattery` |
 | `TOTP_SECRET` | string (base32) | No | MFA TOTP secret for auto-login | `JBSWY3DPEHPK3PXP` |

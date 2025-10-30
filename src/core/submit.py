@@ -19,9 +19,10 @@ Attendance submission workflow for Always Attend.
 import os
 import json
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse, urlunparse
 import argparse
 import re
@@ -205,8 +206,288 @@ async def _collect_day_anchors(page: Page) -> List[str]:
 def _normalize_slot_text(slot: str) -> str:
     s = (slot or "").strip().lower()
     # normalize common labels e.g., "Workshop 1" -> "workshop 01"
+    s = s.replace("laboratory", "lab")
+    s = s.replace("tutorial", "tut")
+    s = s.replace("practical", "prac")
+    s = s.replace("session", "sess")
+    s = s.replace("-", " ")
+    s = re.sub(r"\s+", " ", s)
     s = re.sub(r"\b(\d)\b", r"0\1", s)  # pad single digit
     return s
+
+
+@dataclass
+class SubmissionTarget:
+    course_code: str
+    slot_label: str
+    slot_norm: str
+    anchor: Optional[str]
+    position: int
+    raw_text: str
+
+
+@dataclass
+class SubmissionOutcome:
+    target: SubmissionTarget
+    attempts: int
+    success: bool
+    code: Optional[str]
+
+
+def _dedupe_preserve(items: List[str]) -> List[str]:
+    seen: Set[str] = set()
+    result: List[str] = []
+    for item in items:
+        if not item:
+            continue
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _extract_slot_label(raw_text: str, course_code: str) -> str:
+    lines = [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
+    if not lines:
+        return raw_text.strip()
+    course_lower = course_code.lower()
+    for line in lines:
+        cleaned = re.sub(rf"\b{re.escape(course_code)}\b", "", line, flags=re.I).strip("-:– ")
+        if cleaned:
+            return cleaned
+        if course_lower not in line.lower():
+            return line
+    return lines[0]
+
+
+def _format_progress_label(course: str, slot_label: str) -> str:
+    return f"{course} {slot_label}".strip()
+
+
+def _build_candidate_codes(
+    slot_norm: str,
+    slot_code_map: Dict[str, List[str]],
+    ordered_codes: List[str],
+    used_codes: Optional[Set[str]] = None,
+) -> List[str]:
+    primary = slot_code_map.get(slot_norm, [])
+    pool = list(primary) + [code for code in ordered_codes if code not in primary]
+    if used_codes:
+        pool = [code for code in pool if code not in used_codes]
+    return _dedupe_preserve(pool)
+
+
+async def _resolve_panel_anchor(li_locator) -> Optional[str]:
+    try:
+        panel_id = await li_locator.evaluate(
+            "el => { const panel = el.closest('.dayPanel'); return panel ? panel.id : null; }"
+        )
+        if panel_id and panel_id.startswith('dayPanel_'):
+            return panel_id[len('dayPanel_'):]
+    except Exception:
+        pass
+    return None
+
+
+async def _collect_course_targets(
+    page: Page,
+    base_url: str,
+    course_code: str,
+    timeout_ms: int = 12000,
+) -> List[SubmissionTarget]:
+    targets: List[SubmissionTarget] = []
+    seen: Set[Tuple[Optional[str], str]] = set()
+
+    if 'Units.aspx' not in (page.url or ''):
+        await page.goto(f"{base_url}/student/Units.aspx", timeout=timeout_ms)
+
+    anchors = await _collect_day_anchors(page)
+
+    async def iter_panel(anchor: Optional[str]) -> None:
+        nonlocal targets
+        root = page
+        if anchor:
+            sel = page.locator('#daySel')
+            if await sel.count() > 0:
+                try:
+                    await sel.select_option(value=anchor)
+                except Exception:
+                    pass
+            try:
+                await page.locator(f'#dayPanel_{anchor}').wait_for(state='visible', timeout=timeout_ms)
+                root = page.locator(f'#dayPanel_{anchor}')
+            except Exception:
+                await asyncio.sleep(_env_ms('DAY_SWITCH_SETTLE_MS', 150)/1000)
+                if await page.locator(f'#dayPanel_{anchor}').count() > 0:
+                    root = page.locator(f'#dayPanel_{anchor}')
+        else:
+            root = page.locator('div.dayPanel:not([style*="display:none"])').first
+            if await root.count() == 0:
+                root = page
+
+        li_nodes = root.locator('li:not(.ui-disabled)').filter(
+            has_text=re.compile(re.escape(course_code), re.I)
+        )
+        count = await li_nodes.count()
+        for idx in range(count):
+            li = li_nodes.nth(idx)
+            try:
+                raw_text = (await li.inner_text()) or ''
+            except Exception:
+                continue
+            if not raw_text.strip():
+                continue
+            try:
+                if await li.locator('img[src*="tick"]').count() > 0:
+                    continue
+            except Exception:
+                pass
+            slot_label = _extract_slot_label(raw_text, course_code) or raw_text.strip()
+            if 'pass' in slot_label.lower():
+                continue
+            anchor_value = await _resolve_panel_anchor(li) or anchor
+            slot_norm = _normalize_slot_text(slot_label)
+            key = (anchor_value, slot_norm)
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append(
+                SubmissionTarget(
+                    course_code=course_code,
+                    slot_label=slot_label,
+                    slot_norm=slot_norm,
+                    anchor=anchor_value,
+                    position=idx,
+                    raw_text=raw_text.strip(),
+                )
+            )
+
+    # Include currently visible panel first
+    await iter_panel(None)
+    for anchor in anchors:
+        await iter_panel(anchor)
+
+    # Ensure we return to Units overview state for subsequent operations
+    try:
+        await page.goto(f"{base_url}/student/Units.aspx", timeout=timeout_ms)
+    except Exception:
+        pass
+
+    return targets
+
+
+async def _open_target_entry(
+    page: Page,
+    base_url: str,
+    target: SubmissionTarget,
+    timeout_ms: int = 12000,
+) -> bool:
+    try:
+        if 'Units.aspx' not in (page.url or ''):
+            await page.goto(f"{base_url}/student/Units.aspx", timeout=timeout_ms)
+
+        anchor = target.anchor
+        if anchor:
+            sel = page.locator('#daySel')
+            if await sel.count() > 0:
+                try:
+                    await sel.select_option(value=anchor)
+                except Exception:
+                    pass
+            try:
+                await page.locator(f'#dayPanel_{anchor}').wait_for(state='visible', timeout=timeout_ms)
+                root = page.locator(f'#dayPanel_{anchor}')
+            except Exception:
+                await asyncio.sleep(_env_ms('DAY_SWITCH_SETTLE_MS', 150)/1000)
+                root = page.locator(f'#dayPanel_{anchor}') if await page.locator(f'#dayPanel_{anchor}').count() > 0 else page
+        else:
+            root = page.locator('div.dayPanel:not([style*="display:none"])').first
+            if await root.count() == 0:
+                root = page
+
+        li_nodes = root.locator('li:not(.ui-disabled)').filter(
+            has_text=re.compile(re.escape(target.course_code), re.I)
+        )
+        if target.position >= await li_nodes.count():
+            return False
+        li = li_nodes.nth(target.position)
+        link = li.locator('a[href*="Entry.aspx"]').first
+        if await link.count() == 0:
+            try:
+                await li.click()
+            except Exception:
+                pass
+            link = li.locator('a[href*="Entry.aspx"]').first
+            if await link.count() == 0:
+                return False
+        try:
+            await li.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        await link.click()
+        try:
+            await page.wait_for_url(lambda u: ('Entry.aspx' in u), timeout=timeout_ms)
+        except Exception:
+            pass
+        return 'Entry.aspx' in (page.url or '')
+    except Exception as exc:
+        logger.debug(f"Failed to open target entry for {target.course_code} {target.slot_label}: {exc}")
+        return False
+
+
+async def _submit_codes_for_target(
+    page: Page,
+    base_url: str,
+    target: SubmissionTarget,
+    slot_code_map: Dict[str, List[str]],
+    ordered_codes: List[str],
+    used_codes: Set[str],
+    used_codes_lock: asyncio.Lock,
+) -> SubmissionOutcome:
+    async with used_codes_lock:
+        candidate_codes = _build_candidate_codes(target.slot_norm, slot_code_map, ordered_codes, used_codes)
+
+    total = len(candidate_codes)
+    if total == 0:
+        logger.warning(f"No codes available to try for {target.course_code} {target.slot_label}")
+        return SubmissionOutcome(target=target, attempts=0, success=False, code=None)
+
+    attempts = 0
+    success_code: Optional[str] = None
+    label = _format_progress_label(target.course_code, target.slot_label)
+
+    for idx, code in enumerate(candidate_codes, start=1):
+        attempts += 1
+        progress(f"{label}: {idx}/{total}")
+
+        opened = await _open_target_entry(page, base_url, target)
+        if not opened:
+            opened, _ = await open_entry_for_course_slot(page, base_url, target.course_code, target.slot_label)
+        if not opened:
+            opened = await open_entry_for_course(page, base_url, target.course_code)
+        if not opened:
+            logger.warning(f"Unable to open entry for {target.course_code} {target.slot_label}")
+            break
+
+        ok, _ = await submit_code_on_entry(page, code)
+
+        try:
+            await page.goto(f"{base_url}/student/Units.aspx", timeout=20000)
+        except Exception:
+            pass
+
+        verified = await verify_entry_mark(page, base_url, target.anchor, target.course_code, target.slot_label)
+        if ok and verified:
+            async with used_codes_lock:
+                used_codes.add(code)
+            progress(f"{label}: {total}/{total}")
+            logger.info(f"✓ {target.course_code} {target.slot_label}: {code}")
+            success_code = code
+            return SubmissionOutcome(target=target, attempts=attempts, success=True, code=success_code)
+
+    logger.warning(f"No codes succeeded for {target.course_code} {target.slot_label} after {attempts} attempts")
+    return SubmissionOutcome(target=target, attempts=attempts, success=False, code=None)
 
 
 async def open_entry_for_course(page: Page, base_url: str, course_code: str, timeout_ms: int = 12000) -> bool:
@@ -662,6 +943,8 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             courses_processed: List[str] = []
             codes_submitted: Dict[str, int] = {}
             errors: List[str] = []
+            course_attempts: Dict[str, int] = {}
+            course_success_codes: Dict[str, List[str]] = {}
 
             # Optional concurrency across courses
             try:
@@ -672,7 +955,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             sem = asyncio.Semaphore(max_conc if max_conc > 0 else 1)
 
             async def process_course(course: str) -> None:
-                nonlocal courses_processed, codes_submitted, errors
+                nonlocal courses_processed, codes_submitted, errors, course_attempts, course_success_codes
                 async with sem:
                     try:
                         step(f"Processing course: {course}")
@@ -700,59 +983,124 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                             if raw_url:
                                 logger.info(f"Raw URL: {raw_url}")
                         courses_processed.append(course)
+
+                        slot_code_map: Dict[str, List[str]] = {}
+                        ordered_codes: List[str] = []
+                        for entry in codes:
+                            code_val = (entry.get('code') or '').strip()
+                            if not code_val:
+                                continue
+                            ordered_codes.append(code_val)
+                            slot_norm = _normalize_slot_text(entry.get('slot') or '')
+                            if slot_norm:
+                                slot_code_map.setdefault(slot_norm, [])
+                                if code_val not in slot_code_map[slot_norm]:
+                                    slot_code_map[slot_norm].append(code_val)
+                        ordered_codes = _dedupe_preserve(ordered_codes)
+
                         if dry_run:
-                            logger.info(f"[DRY RUN] Would submit {len(codes)} codes for {course} week {wk}")
+                            logger.info(
+                                f"[DRY RUN] Would submit {len(ordered_codes)} codes across {len(slot_code_map)} slots for {course} week {wk}"
+                            )
                             return
-                        # Use a dedicated page for this course
-                        p = await context.new_page()
-                        submitted = 0
+
+                        used_codes: Set[str] = set()
+                        used_codes_lock = asyncio.Lock()
+
+                        target_page = await context.new_page()
                         try:
-                            # Pre-check any entry exists (fast)
-                            progress(f"Checking if {course} has attendance entries...")
-                            if not await open_entry_for_course(p, base_url, course):
-                                logger.warning(f"No entry page found for {course}; skipping this course")
-                                await p.close()
-                                return
-                            # Return to Units
+                            targets = await _collect_course_targets(target_page, base_url, course)
+                        except Exception as exc:
+                            logger.debug(f"Failed to collect targets for {course}: {exc}")
+                            errors.append(str(exc))
+                            targets = []
+
+                        if not targets:
+                            logger.info(f"No pending attendance entries detected for {course}")
+                            codes_submitted[course] = 0
+                            course_attempts[course] = 0
+                            course_success_codes[course] = []
                             try:
-                                await p.goto(f"{base_url}/student/Units.aspx", timeout=20000)
+                                await target_page.close()
                             except Exception:
                                 pass
-                            for entry in codes:
-                                slot_label = entry.get('slot') or ''
-                                code = entry.get('code')
-                                if not code:
-                                    continue
-                                # Skip PASS slots entirely
-                                if 'pass' in slot_label.lower():
-                                    continue
-                                try:
-                                    progress(f"Opening {course} {slot_label}...")
-                                    opened, used_anchor = await open_entry_for_course_slot(p, base_url, course, slot_label)
-                                    if not opened:
-                                        # fallback to generic open
-                                        opened = await open_entry_for_course(p, base_url, course)
-                                        used_anchor = used_anchor or None
-                                    progress(f"Submitting code for {course} {slot_label}...")
-                                    ok, _ = await submit_code_on_entry(p, code)
-                                    # navigate back and verify via tick icon
+                            return
+
+                        logger.info(f"Pending attendance entries for {course}: {len(targets)}")
+
+                        target_conc_env = os.getenv('SUBMIT_TARGET_CONCURRENCY', '1')
+                        try:
+                            target_concurrency = int(target_conc_env)
+                        except Exception:
+                            target_concurrency = 1
+                        if target_concurrency <= 0:
+                            target_concurrency = 1
+
+                        outcomes: List[SubmissionOutcome] = []
+
+                        if target_concurrency == 1:
+                            worker_page = target_page
+                            try:
+                                for target in targets:
                                     try:
-                                        await p.goto(f"{base_url}/student/Units.aspx", timeout=20000)
-                                    except Exception:
-                                        pass
-                                    verified = await verify_entry_mark(p, base_url, used_anchor, course, slot_label)
-                                    if ok and verified:
-                                        submitted += 1
-                                        logger.info(f"✓ {course} {slot_label}: {code}")
-                                except Exception as e:
-                                    logger.debug(f"Error submitting {course} {slot_label}: {e}")
-                                    errors.append(str(e))
-                        finally:
-                            codes_submitted[course] = submitted
+                                        outcome = await _submit_codes_for_target(
+                                            worker_page,
+                                            base_url,
+                                            target,
+                                            slot_code_map,
+                                            ordered_codes,
+                                            used_codes,
+                                            used_codes_lock,
+                                        )
+                                        outcomes.append(outcome)
+                                    except Exception as exc:
+                                        logger.debug(f"Error processing {target.course_code} {target.slot_label}: {exc}")
+                                        errors.append(str(exc))
+                            finally:
+                                try:
+                                    await worker_page.close()
+                                except Exception:
+                                    pass
+                        else:
                             try:
-                                await p.close()
+                                await target_page.close()
                             except Exception:
                                 pass
+
+                            target_sem = asyncio.Semaphore(target_concurrency)
+
+                            async def run_target(t: SubmissionTarget) -> SubmissionOutcome:
+                                async with target_sem:
+                                    page_local = await context.new_page()
+                                    try:
+                                        return await _submit_codes_for_target(
+                                            page_local,
+                                            base_url,
+                                            t,
+                                            slot_code_map,
+                                            ordered_codes,
+                                            used_codes,
+                                            used_codes_lock,
+                                        )
+                                    except Exception as exc:
+                                        logger.debug(f"Error processing {t.course_code} {t.slot_label}: {exc}")
+                                        errors.append(str(exc))
+                                        return SubmissionOutcome(target=t, attempts=0, success=False, code=None)
+                                    finally:
+                                        try:
+                                            await page_local.close()
+                                        except Exception:
+                                            pass
+
+                            outcomes = await asyncio.gather(*(run_target(t) for t in targets))
+
+                        submitted = sum(1 for outcome in outcomes if outcome and outcome.success)
+                        attempts_total = sum(outcome.attempts for outcome in outcomes if outcome)
+                        success_code_list = [outcome.code for outcome in outcomes if outcome and outcome.code]
+
+                        codes_submitted[course] = submitted
+                        course_attempts[course] = attempts_total
+                        course_success_codes[course] = success_code_list
                     except Exception as e:
                         errors.append(str(e))
 
@@ -763,7 +1111,14 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             # Record overall run stats
             overall_success = any(v > 0 for v in codes_submitted.values())
             try:
-                stats.record_run(success=overall_success, courses_processed=courses_processed, codes_submitted=codes_submitted, errors=errors)
+                stats.record_run(
+                    success=overall_success,
+                    courses_processed=courses_processed,
+                    codes_submitted=codes_submitted,
+                    errors=errors,
+                    attempts=course_attempts,
+                    success_codes=course_success_codes,
+                )
             except Exception:
                 pass
         
