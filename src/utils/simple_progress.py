@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
  █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
 ██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
@@ -45,8 +46,8 @@ if RICH_AVAILABLE:
             self,
             width: int = 26,
             *,
-            border_style: str = "bright_cyan",
-            fill_style: str = "cyan",
+            border_style: str = "blue",
+            fill_style: str = "bright_blue",
             finished_style: str = "green",
             empty_style: str = "grey23",
         ) -> None:
@@ -71,13 +72,14 @@ if RICH_AVAILABLE:
             filled = int(bar_width * ratio)
             empty = bar_width - filled
 
-            text = Text("▐", style=self.border_style)
+            # Modern progress bar with blue blocks
+            text = Text("╭", style=self.border_style)
             if filled:
                 style = self.finished_style if task.finished else self.fill_style
                 text.append("█" * filled, style=style)
             if empty:
                 text.append("░" * empty, style=self.empty_style)
-            text.append("▌", style=self.border_style)
+            text.append("╮", style=self.border_style)
             return text
 
     class AsciiSpinnerColumn(ProgressColumn):
@@ -102,7 +104,6 @@ if RICH_AVAILABLE:
             self._frame_state[task.id] = index + 1
             return Text(frame, style=self.style)
 
-
 @dataclass
 class TaskInfo:
     """Information about a task to be processed."""
@@ -113,7 +114,6 @@ class TaskInfo:
     success: bool = False
     success_code: Optional[str] = None
     status: str = ""
-
 
 class SimpleProgressTracker:
     """Simple, clean progress tracker focused on clarity and UX."""
@@ -131,7 +131,7 @@ class SimpleProgressTracker:
         self.progress = None
         self.progress_task_id: Optional[TaskID] = None
         self._last_progress: Dict[str, int] = {}
-        self.bar_width = 26
+        self.bar_width = 28
 
     def print_task_list(self, tasks: List[TaskInfo]) -> None:
         """Print the list of tasks to be processed."""
@@ -141,12 +141,15 @@ class SimpleProgressTracker:
             return
 
         if self.use_rich and self.console:
+            # Simple table without box borders
             table = Table(
-                Column(header="#", justify="right", style="bright_cyan"),
-                Column(header="Course", style="bold white"),
-                Column(header="Slot", style="cyan"),
-                Column(header="Codes", justify="center", style="magenta"),
-                box=box.ROUNDED,
+                Column(header="#", justify="right", style="blue"),
+                Column(header="Course", style="bold"),
+                Column(header="Slot", style="blue"),
+                Column(header="Codes", justify="center", style="bright_blue"),
+                box=None,  # Remove borders
+                show_header=True,
+                header_style="bold blue",
                 expand=False,
             )
             for i, task in enumerate(tasks, 1):
@@ -156,20 +159,14 @@ class SimpleProgressTracker:
                     task.slot,
                     f"{task.total_codes}",
                 )
-            panel = Panel(
-                table,
-                title="📋 Tasks to Process",
-                border_style="bright_cyan",
-            )
-            self.console.print(panel)
+            # Print table directly without panel/frame
+            self.console.print()
+            self.console.print(table)
+            self.console.print()
         else:
-            print("\n📋 Tasks to Process:")
-            print("=" * 50)
-
+            # Simple list format for non-rich terminals
             for i, task in enumerate(tasks, 1):
-                print(f"{i:2d}. {task.course} {task.slot} ({task.total_codes} codes to try)")
-
-            print("=" * 50)
+                print(f"  {i:2d}. {task.course} {task.slot} ({task.total_codes} codes)")
             print()
             sys.stdout.flush()
 
@@ -198,17 +195,17 @@ class SimpleProgressTracker:
         if self.use_rich and self.console:
             bar_column = BlockBarColumn(
                 width=self.bar_width,
-                border_style="bright_cyan",
-                fill_style="cyan",
-                finished_style="green",
-                empty_style="grey30",
+                border_style="blue",
+                fill_style="bright_blue",
+                finished_style="bright_green",
+                empty_style="dim white",
             )
 
             self.progress = Progress(
                 AsciiSpinnerColumn(),
-                TextColumn("[bold bright_cyan]{task.fields[name]}"),
+                TextColumn("[bold blue]{task.fields[name]}"),
                 bar_column,
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("[bold]{task.percentage:>3.0f}%"),
                 TextColumn("[dim]{task.completed}/{task.total}[/]"),
                 TextColumn("[dim]{task.fields[status]}[/]"),
                 TimeElapsedColumn(),
@@ -244,7 +241,7 @@ class SimpleProgressTracker:
                 self.progress_task_id,
                 completed=min(attempt_number, max(task.total_codes, 1)),
                 description=(
-                    f"[cyan]{task.course}[/] {task.slot} • trying {attempt_number}/{task.total_codes}"
+                    f"[blue]{task.course}[/] {task.slot} • trying {attempt_number}/{task.total_codes}"
                 ),
                 status=task.status,
             )
@@ -285,8 +282,8 @@ class SimpleProgressTracker:
 
             if self.console:
                 if success:
-                    body = f"[bold green]✅ {task.course} {task.slot}[/]\n[cyan]{success_code or 'N/A'}[/]"
-                    border = "bright_cyan"
+                    body = f"[bold green]✅ {task.course} {task.slot}[/]\n[bright_blue]{success_code or 'N/A'}[/]"
+                    border = "blue"
                 else:
                     body = f"[bold red]❌ {task.course} {task.slot}[/]\nFailed after {task.current_attempt} attempts"
                     border = "red"
@@ -333,7 +330,7 @@ class SimpleProgressTracker:
         ratio = current / total
         filled = int(self.bar_width * ratio)
         empty = self.bar_width - filled
-        return f"▐{'█' * filled}{'░' * empty}▌"
+        return f"╭{'█' * filled}{'░' * empty}╮"
 
     def _format_progress_line(self, task: TaskInfo, current: int) -> str:
         total = max(task.total_codes, 1)
@@ -371,7 +368,6 @@ def create_task_list_from_targets(targets, slot_code_map, ordered_codes) -> List
             ))
 
     return tasks
-
 
 # Legacy compatibility wrapper for existing code
 class ProgressTracker(SimpleProgressTracker):

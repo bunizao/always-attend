@@ -169,6 +169,34 @@ Statistics include:
 - Recent activity timeline
 - Error history
 
+## ✨ Rich CLI Experience
+
+Always Attend ships with a polished terminal UI powered by [Rich](https://github.com/Textualize/rich):
+
+- Animated Monash-blue typewriter banner with optional spark highlights (auto-disables on non-TTY output).
+- Live, single-line progress bars with square block fills and cached ASCII spinners when `CLI_PROGRESS_RICH=1`.
+- Animated logging for major workflow steps without leaking ANSI fragments when launched via `.command`/`.bat`.
+
+### UI Control Flags
+
+| Variable | Values | Effect |
+| --- | --- | --- |
+| `CLI_STYLE` | `fancy` (default), `simple`, `minimal` | Toggle banner + log animations |
+| `FORCE_ANIMATIONS` | `true` / `false` | Override TTY detection (useful for debugging) |
+| `CLI_PROGRESS_RICH` | `1` / `0` | Enable/disable Rich live progress tracker |
+
+### Examples
+
+```bash
+# Full experience: animated banner, live block progress
+CLI_STYLE=fancy CLI_PROGRESS_RICH=1 python main.py --dry-run
+
+# Quiet fallback suitable for basic terminals
+CLI_STYLE=minimal CLI_PROGRESS_RICH=0 python main.py
+```
+
+Set these in your `.env` to persist the chosen style across runs.
+
 ## Troubleshooting
 
 - If login keeps asking for MFA: re-run the headed login to refresh `storage_state.json`

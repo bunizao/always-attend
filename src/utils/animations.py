@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
  █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
 ██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
@@ -22,6 +23,7 @@ import time
 import shutil
 import random
 from typing import Optional, List
+
 from rich.console import Console
 from rich.text import Text
 from rich.live import Live
@@ -123,25 +125,42 @@ class AnimationConfig:
         }
         return speed_map.get(self.speed, speed_map["normal"])
 
-
 class TypewriterBanner:
     """Typewriter effect for ASCII art banners."""
 
-    _BANNER = r"""
- █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
-██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
-███████║██║     ██║ █╗ ██║███████║ ╚████╔╝ ███████╗
-██╔══██║██║     ██║███╗██║██╔══██║  ╚██╔╝  ╚════██║
-██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
-╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
+    # Use list format for gradient application consistency with console.py
+    _BANNER_LINES = [
+        " █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗",
+        "██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝",
+        "███████║██║     ██║ █╗ ██║███████║ ╚████╔╝ ███████╗",
+        "██╔══██║██║     ██║███╗██║██╔══██║  ╚██╔╝  ╚════██║",
+        "██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║",
+        "╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝",
+        "",
+        " █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ ",
+        "██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗",
+        "███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║",
+        "██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║",
+        "██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝",
+        "╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝"
+    ]
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
-██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
-███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
-██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
-██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
-"""
+    # Elegant purple-pink-blue spectrum gradient
+    _GRADIENT_COLORS = [
+        "#9333EA",  # Rich purple
+        "#A855F7",  # Bright purple
+        "#C084FC",  # Light purple
+        "#D8B4FE",  # Pale purple
+        "#C4A5FF",  # Light lavender
+        "#B794F4",  # Medium lavender
+        "#A78BFA",  # Purple-blue
+        "#8B5CF6",  # Deep purple-blue
+        "#7C3AED",  # Indigo
+        "#6366F1",  # Blue-indigo
+        "#4F46E5",  # Deep blue
+        "#4338CA",  # Royal blue
+        "#3730A3"   # Dark blue
+    ]
 
     def __init__(self, config: Optional[AnimationConfig] = None):
         self.config = config or AnimationConfig()
@@ -161,20 +180,10 @@ class TypewriterBanner:
         left = pad_total // 2
         return " " * left + stripped
 
-    def _create_gradient_style(self, char_index: int, total_chars: int) -> str:
-        """Create a gradient color effect for characters."""
-        # Define gradient from cyan to blue to monash blue
-        progress = char_index / max(total_chars, 1)
-
-        if progress < 0.33:
-            # Cyan phase
-            return "cyan"
-        elif progress < 0.66:
-            # Blue phase
-            return "blue"
-        else:
-            # Monash blue phase
-            return "#0053a0"  # Monash blue RGB
+    def _create_gradient_style(self, line_index: int) -> str:
+        """Create a gradient color effect based on line position."""
+        # Use the same gradient colors as console.py, cycling through them by line
+        return self._GRADIENT_COLORS[line_index % len(self._GRADIENT_COLORS)]
 
     def _compose_display(self, lines: List[Text]) -> Text:
         """Compose banner lines into a single renderable."""
@@ -199,18 +208,16 @@ class TypewriterBanner:
     def _typewrite_line(self, line: str, live: Live, current_display: List[Text], line_index: int) -> None:
         """Stream a single banner line with optional spark highlights."""
         centered_line = self._center_text(line)
-        total_visible = sum(1 for ch in centered_line if ch.strip())
         if len(current_display) <= line_index:
             current_display.append(Text(no_wrap=True))
 
         base_line = Text(no_wrap=True)
-        visible_count = 0
+        # Get the gradient style for this entire line
+        line_style = self._create_gradient_style(line_index)
 
         for char in centered_line:
             if char.strip():
-                visible_count += 1
-                style = self._create_gradient_style(visible_count, total_visible)
-                base_line.append(char, style=style)
+                base_line.append(char, style=line_style)
                 delay = self.config.char_delay
             else:
                 base_line.append(char)
@@ -220,7 +227,7 @@ class TypewriterBanner:
 
             if (
                 self._sparks_enabled
-                and visible_count > 0
+                and len([c for c in base_line.plain if c.strip()]) > 0
                 and self.config.char_delay > 0.0
                 and random.random() <= self._spark_probability
             ):
@@ -242,7 +249,7 @@ class TypewriterBanner:
 
     def _get_banner_lines(self) -> List[str]:
         """Get banner lines, filtering out empty ones."""
-        return [line for line in self._BANNER.strip().splitlines() if line.strip()]
+        return [line for line in self._BANNER_LINES if line.strip()]
 
     def display(self, subtitle: Optional[str] = None) -> None:
         """Display banner with typewriter effect."""
@@ -285,9 +292,10 @@ class TypewriterBanner:
         """Simple fallback display without animation."""
         banner_lines = self._get_banner_lines()
 
-        for line in banner_lines:
+        for i, line in enumerate(banner_lines):
             centered = self._center_text(line)
-            styled_text = Text(centered, style="#0053a0", no_wrap=True)  # Monash blue
+            line_style = self._create_gradient_style(i)
+            styled_text = Text(centered, style=line_style, no_wrap=True)
             self.console.print(styled_text)
 
         if subtitle:
@@ -304,15 +312,13 @@ class TypewriterBanner:
         rule_line = f"{'═' * left}{label_text}{'═' * right}"
         return rule_line[:self.width]
 
-
 def create_typewriter_banner(subtitle: Optional[str] = None, config: Optional[AnimationConfig] = None) -> None:
     """Convenience function to create and display a typewriter banner."""
     banner = TypewriterBanner(config)
     banner.display(subtitle)
 
-
 # Compatibility with existing animation in console.py
-def play_loading_animation(text: str = "ALWAYS ATTEND", accent: str = "cyan") -> None:
+def play_loading_animation(text: str = "ALWAYS ATTEND", accent: str = "blue") -> None:
     """Simple loading animation for compatibility."""
     config = AnimationConfig()
     if not config.enabled:

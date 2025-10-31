@@ -7,12 +7,12 @@
 ██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
 ╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ 
+ █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
 ██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
 ███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
 ██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
 ██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ 
+╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
 src/config/config_wizard.py
 Interactive configuration wizard for Always Attend.
 """
@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from utils.logger import logger
-
 
 class ConfigWizard:
     """Interactive configuration wizard for first-time setup"""
@@ -59,6 +58,10 @@ class ConfigWizard:
         # Browser configuration
         print("\n" + "🌐 Browser Settings".center(60, "-"))
         self._configure_browser()
+        
+        # UI preferences
+        print("\n" + "🎨 Interface Style".center(60, "-"))
+        self._configure_ui()
             
         # Save configuration
         if self.config:
@@ -212,6 +215,32 @@ class ConfigWizard:
             self.config['BROWSER'] = 'chromium'
             self.config['BROWSER_CHANNEL'] = 'chrome'
             print("✅ Using system Chrome browser (default)")
+    
+    def _configure_ui(self) -> None:
+        """Configure CLI UI preferences."""
+        print("\nDo you prefer the new fancy animated interface?")
+        print("You can switch styles any time by editing CLI_STYLE in .env.")
+        
+        preference = input("\nEnjoy fancy UI with animations? (Y/n): ").strip().lower()
+        if preference in ("", "y", "yes"):
+            self.config["CLI_STYLE"] = "fancy"
+            self.config["CLI_PROGRESS_RICH"] = "1"
+            print("✨ Fancy Rich UI enabled (typewriter banner + live progress).")
+            return
+        
+        print("\nPick your preferred style:")
+        print("1) Simple — colored banner without animations")
+        print("2) Minimal — plain text, no animations")
+        style_choice = input("\nChoose (1-2): ").strip()
+        
+        if style_choice == "2":
+            self.config["CLI_STYLE"] = "minimal"
+            self.config["CLI_PROGRESS_RICH"] = "0"
+            print("📄 Minimal UI selected.")
+        else:
+            self.config["CLI_STYLE"] = "simple"
+            self.config["CLI_PROGRESS_RICH"] = "1"
+            print("✅ Simple UI selected (no fancy animation).")
         
     def _configure_ocr(self) -> bool:
         """Legacy OCR config removed; no-op."""
@@ -310,12 +339,10 @@ class ConfigWizard:
         except Exception as exc:
             logger.warning("Unable to mark setup completion: %s", exc)
 
-
 def main():
     """Run the configuration wizard standalone"""
     wizard = ConfigWizard()
     wizard.run()
-
 
 if __name__ == "__main__":
     main()

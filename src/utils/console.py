@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
  █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
 ██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
@@ -6,16 +7,15 @@
 ██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
 ╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ 
+ █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
 ██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
 ███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
 ██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
 ██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ 
+╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
 src/utils/console.py
 Console rendering utilities for the Always Attend CLI.
 """
-
 from __future__ import annotations
 
 import os
@@ -34,7 +34,6 @@ except ImportError:
     ANIMATIONS_AVAILABLE = False
 
 __all__ = ["PortalConsole", "ConsolePalette"]
-
 
 @dataclass
 class ConsolePalette:
@@ -61,25 +60,40 @@ class ConsolePalette:
             return text
         return f"{''.join(styles)}{text}{self.reset}"
 
-
 class PortalConsole:
     """Coordinated helper for rendering a friendly CLI front-end."""
 
-    _BANNER = r"""
- █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
-██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
-███████║██║     ██║ █╗ ██║███████║ ╚████╔╝ ███████╗
-██╔══██║██║     ██║███╗██║██╔══██║  ╚██╔╝  ╚════██║
-██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
-╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
+    _BANNER = [
+        " █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗",
+        "██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝",
+        "███████║██║     ██║ █╗ ██║███████║ ╚████╔╝ ███████╗",
+        "██╔══██║██║     ██║███╗██║██╔══██║  ╚██╔╝  ╚════██║",
+        "██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║",
+        "╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝",
+        "",
+        " █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ ",
+        "██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗",
+        "███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║",
+        "██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║",
+        "██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝",
+        "╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝"
+    ]
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ 
-██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
-███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
-██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
-██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ 
-"""
+    _GRADIENT_COLORS = [
+        "\033[38;2;147;51;234m",  # Rich purple
+        "\033[38;2;168;85;247m",  # Bright purple
+        "\033[38;2;192;132;252m", # Light purple
+        "\033[38;2;216;180;254m", # Pale purple
+        "\033[38;2;196;165;255m", # Light lavender
+        "\033[38;2;183;148;244m", # Medium lavender
+        "\033[38;2;167;139;250m", # Purple-blue
+        "\033[38;2;139;92;246m",  # Deep purple-blue
+        "\033[38;2;124;58;237m",  # Indigo
+        "\033[38;2;99;102;241m",  # Blue-indigo
+        "\033[38;2;79;70;229m",   # Deep blue
+        "\033[38;2;67;56;202m",   # Royal blue
+        "\033[38;2;55;48;163m"    # Dark blue
+    ]
 
     def __init__(self) -> None:
         self.palette = ConsolePalette()
@@ -146,12 +160,24 @@ class PortalConsole:
                 typewriter.display(subtitle)
                 return
 
-        # Fall back to original implementation
+        # Fall back to gradient banner implementation
         self._play_banner_animation(accent)
-        color = getattr(self.palette, accent, "")
-        for raw_line in self._BANNER.strip("\n").splitlines():
-            centered = self._center_text(raw_line)
-            print(self.palette.apply(centered, color, self.palette.bold))
+
+        # Display banner with gradient effect
+        for i, line in enumerate(self._BANNER):
+            if not line.strip():  # Empty line
+                print()
+                continue
+
+            # Apply gradient color based on line index
+            color = self._GRADIENT_COLORS[i % len(self._GRADIENT_COLORS)]
+            centered = self._center_text(line)
+
+            if not self.palette.disabled:
+                print(f"{color}{self.palette.bold}{centered}{self.palette.reset}")
+            else:
+                print(centered)
+
         if subtitle:
             print(self._rule(subtitle, accent=accent))
 

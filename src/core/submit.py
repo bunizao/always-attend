@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
  █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
 ██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
@@ -6,12 +7,12 @@
 ██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
 ╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ 
+ █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
 ██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
 ███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
 ██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
 ██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ 
+╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
 src/core/submit.py
 Attendance submission workflow for Always Attend.
 """
@@ -48,11 +49,9 @@ def to_base(origin_url: str) -> str:
     pu = urlparse(origin_url)
     return urlunparse((pu.scheme, pu.netloc, "", "", "", ""))
 
-
 def _data_root() -> Path:
     raw = os.getenv("CODES_DB_PATH", "data")
     return Path(raw).expanduser().resolve()
-
 
 MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -82,7 +81,6 @@ def parse_anchor(anchor: str) -> Optional[datetime]:
 
 def _is_storage_state_effective(path: str) -> bool:
     return is_storage_state_effective(path)
-
 
 def _compute_raw_url_for_path(rel_path: str) -> Optional[str]:
     """Compute a GitHub raw URL for a repository-relative file path.
@@ -125,7 +123,6 @@ def _compute_raw_url_for_path(rel_path: str) -> Optional[str]:
     except Exception:
         return None
 
-
 def _env_ms(name: str, default: int) -> int:
     try:
         val = int(os.getenv(name, str(default)))
@@ -133,13 +130,11 @@ def _env_ms(name: str, default: int) -> int:
     except Exception:
         return default
 
-
 def _run_git(args: List[str], cwd: Path) -> None:
     import subprocess
     result = subprocess.run(args, cwd=str(cwd), capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "git command failed")
-
 
 def sync_codes_database() -> None:
     repo_url = os.getenv("CODES_DB_REPO", "").strip()
@@ -167,7 +162,6 @@ def sync_codes_database() -> None:
     except Exception as exc:
         logger.warning(f"Codes database sync failed: {exc}")
 
-
 async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
     """
     Navigates to the attendance info page and scrapes enrolled course codes.
@@ -187,7 +181,6 @@ async def scrape_enrolled_courses(page: Page, base_url: str) -> List[str]:
     except Exception as e:
         logger.warning(f"Could not scrape enrolled courses: {e}")
         return []
-
 
 async def _collect_day_anchors(page: Page) -> List[str]:
     anchors: List[str] = []
@@ -212,7 +205,6 @@ async def _collect_day_anchors(page: Page) -> List[str]:
             pass
     return anchors
 
-
 def _normalize_slot_text(slot: str) -> str:
     s = (slot or "").strip().lower()
     # normalize common labels e.g., "Workshop 1" -> "workshop 01"
@@ -225,7 +217,6 @@ def _normalize_slot_text(slot: str) -> str:
     s = re.sub(r"\b(\d)\b", r"0\1", s)  # pad single digit
     return s
 
-
 @dataclass
 class SubmissionTarget:
     course_code: str
@@ -235,14 +226,12 @@ class SubmissionTarget:
     position: int
     raw_text: str
 
-
 @dataclass
 class SubmissionOutcome:
     target: SubmissionTarget
     attempts: int
     success: bool
     code: Optional[str]
-
 
 def _dedupe_preserve(items: List[str]) -> List[str]:
     seen: Set[str] = set()
@@ -255,7 +244,6 @@ def _dedupe_preserve(items: List[str]) -> List[str]:
         seen.add(item)
         result.append(item)
     return result
-
 
 def _extract_slot_label(raw_text: str, course_code: str) -> str:
     lines = [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
@@ -270,10 +258,8 @@ def _extract_slot_label(raw_text: str, course_code: str) -> str:
             return line
     return lines[0]
 
-
 def _format_progress_label(course: str, slot_label: str) -> str:
     return f"{course} {slot_label}".strip()
-
 
 def _build_candidate_codes(
     slot_norm: str,
@@ -287,7 +273,6 @@ def _build_candidate_codes(
         pool = [code for code in pool if code not in used_codes]
     return _dedupe_preserve(pool)
 
-
 async def _resolve_panel_anchor(li_locator) -> Optional[str]:
     try:
         panel_id = await li_locator.evaluate(
@@ -298,7 +283,6 @@ async def _resolve_panel_anchor(li_locator) -> Optional[str]:
     except Exception:
         pass
     return None
-
 
 async def _collect_course_targets(
     page: Page,
@@ -386,7 +370,6 @@ async def _collect_course_targets(
 
     return targets
 
-
 async def _open_target_entry(
     page: Page,
     base_url: str,
@@ -444,7 +427,6 @@ async def _open_target_entry(
     except Exception as exc:
         logger.debug(f"Failed to open target entry for {target.course_code} {target.slot_label}: {exc}")
         return False
-
 
 async def _submit_codes_for_target(
     page: Page,
@@ -525,7 +507,6 @@ async def _submit_codes_for_target(
     else:
         logger.warning(f"No codes succeeded for {target.course_code} {target.slot_label} after {attempts} attempts")
     return SubmissionOutcome(target=target, attempts=attempts, success=False, code=None)
-
 
 async def open_entry_for_course(page: Page, base_url: str, course_code: str, timeout_ms: int = 12000) -> bool:
     """Open any entry for the course (fallback when slot-specific open is not available)."""
@@ -627,7 +608,6 @@ async def open_entry_for_course(page: Page, base_url: str, course_code: str, tim
         logger.warning(f"Failed to open entry for {course_code}: {e}")
         return False
 
-
 async def open_entry_for_course_slot(page: Page, base_url: str, course_code: str, slot_label: str, timeout_ms: int = 12000) -> Tuple[bool, Optional[str]]:
     """Open the specific entry matching course+slot; returns (opened, anchor_used)."""
     try:
@@ -694,7 +674,6 @@ async def open_entry_for_course_slot(page: Page, base_url: str, course_code: str
         logger.debug(f"Slot-open failed for {course_code} {slot_label}: {e}")
         return False, None
 
-
 async def verify_entry_mark(page: Page, base_url: str, anchor: Optional[str], course_code: str, slot_label: str, timeout_ms: int = 8000) -> bool:
     """Verify on Units page that the given course+slot shows a tick icon (success)."""
     try:
@@ -732,7 +711,6 @@ async def verify_entry_mark(page: Page, base_url: str, anchor: Optional[str], co
         return False
     except Exception:
         return False
-
 
 def find_latest_week(course: str) -> Optional[str]:
     """
@@ -781,7 +759,6 @@ def parse_codes(course_code: Optional[str] = None, week_number: Optional[str] = 
 
     return payload
 
-
 async def is_authenticated(page: Page) -> bool:
     """Check if user is authenticated by looking for login indicators."""
     try:
@@ -797,7 +774,6 @@ async def is_authenticated(page: Page) -> bool:
         return True
     except Exception:
         return True  # Assume authenticated if check fails
-
 
 async def submit_code_on_entry(page: Page, code: str, status_cb: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
     """Submit a single attendance code on the current entry page."""
@@ -863,7 +839,6 @@ async def submit_code_on_entry(page: Page, code: str, status_cb: Optional[Callab
     except Exception as e:
         return False, f"Submission error: {str(e)}"
 
-
 async def collect_day_anchors(page: Page, base: str, start_monday: Optional[datetime] = None) -> List[str]:
     """Collect available day anchors from the attendance portal."""
     try:
@@ -886,7 +861,6 @@ async def collect_day_anchors(page: Page, base: str, start_monday: Optional[date
     except Exception as e:
         logger.warning(f"Failed to collect day anchors: {e}")
         return []
-
 
 async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> None:
     """Main submission logic."""
@@ -1208,7 +1182,6 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                 progress_tracker.stop()
             await browser.close()
 
-
 def main():
     """Command line interface."""
     parser = argparse.ArgumentParser(description="Submit attendance codes")
@@ -1222,7 +1195,6 @@ def main():
         os.environ["WEEK_NUMBER"] = str(args.week)
     
     asyncio.run(run_submit(dry_run=args.dry_run, target_email=None))
-
 
 if __name__ == "__main__":
     main()

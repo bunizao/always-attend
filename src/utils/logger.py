@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
  █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
 ██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
@@ -6,16 +7,15 @@
 ██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
 ╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ 
+ █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
 ██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
 ███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
 ██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
 ██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ 
+╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
 src/utils/logger.py
 Structured logging helpers for Always Attend.
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -56,24 +56,21 @@ LOG_FILE = os.getenv("LOG_FILE")
 NO_COLOR = os.getenv("NO_COLOR") is not None
 LOG_LEVEL_OVERRIDE = os.getenv("LOG_LEVEL")
 
-
 def _apply_color(text: str, *styles: str) -> str:
     if NO_COLOR or not styles:
         return text
     colors = "".join(_PALETTE.get(style, "") for style in styles)
     return f"{colors}{text}{_PALETTE['reset']}"
 
-
 # ---------------------------------------------------------------------------
 # Formatter and adapter
-
 
 class LayeredFormatter(logging.Formatter):
     """Formatter that decorates output based on the record.layer attribute."""
 
     LAYER_MAPPINGS: Dict[str, Dict[str, Any]] = {
         "step": {"icon": "▶", "style": ("blue", "bold")},
-        "progress": {"icon": "…", "style": ("cyan",)},
+        "progress": {"icon": "…", "style": ("blue",)},
         "success": {"icon": "✓", "style": ("green", "bold")},
         "warning": {"icon": "!", "style": ("yellow", "bold")},
         "error": {"icon": "✗", "style": ("red", "bold")},
@@ -91,7 +88,6 @@ class LayeredFormatter(logging.Formatter):
             return f"{_apply_color('[debug]', 'dim')} {message}"
         prefix = _apply_color(icon, *style)
         return f"{prefix} {message}"
-
 
 class LayeredAdapter(logging.LoggerAdapter):
     """Logger adapter that injects a 'layer' extra value."""
@@ -122,10 +118,8 @@ class LayeredAdapter(logging.LoggerAdapter):
         kwargs.setdefault("layer", "error")
         super().critical(msg, *args, **kwargs)
 
-
 # ---------------------------------------------------------------------------
 # Configuration
-
 
 def _configure_base_logger() -> LayeredAdapter:
     base_logger = logging.getLogger("always_attend")
@@ -166,9 +160,7 @@ def _configure_base_logger() -> LayeredAdapter:
 
     return LayeredAdapter(base_logger)
 
-
 logger = _configure_base_logger()
-
 
 # ---------------------------------------------------------------------------
 # Animation support
@@ -178,7 +170,6 @@ try:
     ANIMATIONS_AVAILABLE = True
 except ImportError:
     ANIMATIONS_AVAILABLE = False
-
 
 def _animate_text_output(text: str, delay: float = 0.008) -> None:
     """Animate text output using Rich live updates to avoid ANSI artifacts."""
@@ -217,7 +208,6 @@ def _animate_text_output(text: str, delay: float = 0.008) -> None:
                 time.sleep(delay)
     console.line()
 
-
 def _enhanced_log_message(message: str, layer: str, animate: bool = True) -> None:
     """Enhanced logging with optional animation effects."""
     if not ANIMATIONS_AVAILABLE or not animate:
@@ -241,10 +231,8 @@ def _enhanced_log_message(message: str, layer: str, animate: bool = True) -> Non
     # Animate the output
     _animate_text_output(formatted_message, config.char_delay * 0.8)  # Slightly faster than banner
 
-
 # ---------------------------------------------------------------------------
 # Public helpers
-
 
 def step(message: str, *, animated: bool = True) -> None:
     """Log a major step in the workflow with optional animation."""
@@ -253,14 +241,12 @@ def step(message: str, *, animated: bool = True) -> None:
     else:
         logger.log(logging.INFO, message, layer="step")
 
-
 def progress(message: str, *, animated: bool = True) -> None:
     """Log a short-lived progress update with optional animation."""
     if animated and ANIMATIONS_AVAILABLE:
         _enhanced_log_message(message, "progress", animate=True)
     else:
         logger.log(logging.INFO, message, layer="progress")
-
 
 def success(message: str, *, animated: bool = True) -> None:
     """Log successful completion of an action with optional animation."""
@@ -269,21 +255,17 @@ def success(message: str, *, animated: bool = True) -> None:
     else:
         logger.log(logging.INFO, message, layer="success")
 
-
 def debug_detail(message: str) -> None:
     """Log detailed debug information (hidden unless LOG_PROFILE=debug)."""
     logger.log(logging.DEBUG, message, layer="debug")
-
 
 def get_logger(name: str, *, layer: str = "user") -> LayeredAdapter:
     """Return a child logger using the layered formatting."""
     child = logging.getLogger(f"always_attend.{name}")
     return LayeredAdapter(child, default_layer=layer)
 
-
 # ---------------------------------------------------------------------------
 # Spinner support
-
 
 class _Spinner:
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -326,7 +308,7 @@ class _Spinner:
         for frame in itertools.cycle(self.FRAMES):
             if not self._running:
                 break
-            sys.stdout.write(f"\r{_apply_color(frame, 'cyan')} {self.message}")
+            sys.stdout.write(f"\r{_apply_color(frame, 'blue')} {self.message}")
             sys.stdout.flush()
             await asyncio.sleep(0.12)
         _clear_current_line()
@@ -348,9 +330,7 @@ class _Spinner:
         log_fn = getattr(logger, level, logger.info)
         log_fn(message)
 
-
 _SPINNER_LOCK = asyncio.Lock()
-
 
 def _clear_current_line() -> None:
     sys.stdout.write("\r")
@@ -358,11 +338,9 @@ def _clear_current_line() -> None:
     sys.stdout.write("\r")
     sys.stdout.flush()
 
-
 def spinner(message: str) -> _Spinner:
     """Return an async spinner context manager."""
     return _Spinner(message)
-
 
 def set_log_profile(profile: str) -> None:
     """Adjust console logging verbosity at runtime."""

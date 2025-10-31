@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
  █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
 ██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
@@ -13,9 +14,8 @@
 ██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
 ╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
 src/utils/enhanced_progress.py
-Enhanced progress tracking with beautiful animations for Always Attend.
+Rich-enhanced progress tracker for Always Attend.
 """
-
 import os
 import sys
 import time
@@ -49,7 +49,6 @@ try:
 except ImportError:
     ANIMATIONS_AVAILABLE = False
 
-
 @dataclass
 class ProgressStyle:
     """Configuration for progress bar styling."""
@@ -76,7 +75,6 @@ class ProgressStyle:
     compact_mode: bool = False
     show_descriptions: bool = True
 
-
 class EnhancedSpinner:
     """Enhanced spinner with custom animations."""
 
@@ -89,7 +87,7 @@ class EnhancedSpinner:
         "blocks": ["■", "□", "▪", "▫"]
     }
 
-    def __init__(self, style: str = "dots", color: str = "cyan"):
+    def __init__(self, style: str = "dots", color: str = "blue"):
         self.frames = self.SPINNER_FRAMES.get(style, self.SPINNER_FRAMES["dots"])
         self.color = color
         self.current_frame = 0
@@ -98,7 +96,6 @@ class EnhancedSpinner:
         frame = self.frames[self.current_frame]
         self.current_frame = (self.current_frame + 1) % len(self.frames)
         return frame
-
 
 class GradientBar:
     """Custom gradient progress bar."""
@@ -125,7 +122,6 @@ class GradientBar:
         filled = "█" * filled_width
         empty = "░" * (self.width - filled_width)
         return f"{prefix}[{filled}{empty}]{suffix}"
-
 
 class EnhancedProgressTracker:
     """Enhanced progress tracker with beautiful animations and effects."""
@@ -381,7 +377,6 @@ class EnhancedProgressTracker:
         if completed >= total:
             print()  # New line when complete
 
-
 @contextmanager
 def enhanced_progress(style: Optional[ProgressStyle] = None):
     """Context manager for enhanced progress tracking."""
@@ -391,7 +386,6 @@ def enhanced_progress(style: Optional[ProgressStyle] = None):
         yield tracker
     finally:
         tracker.stop()
-
 
 # Convenience functions for common use cases
 def create_submit_progress_style() -> ProgressStyle:
@@ -413,7 +407,6 @@ def create_submit_progress_style() -> ProgressStyle:
         show_descriptions=True
     )
 
-
 def create_compact_progress_style() -> ProgressStyle:
     """Create a compact progress style for limited space."""
     return ProgressStyle(
@@ -428,7 +421,6 @@ def create_compact_progress_style() -> ProgressStyle:
         compact_mode=True,
         show_descriptions=False
     )
-
 
 # Legacy compatibility with existing ProgressTracker
 class ProgressTracker(EnhancedProgressTracker):

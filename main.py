@@ -7,20 +7,15 @@
 ██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
 ╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ 
+ █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
 ██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
 ███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
 ██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
 ██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ 
+╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
 main.py
-Entry point delegating to src/core/main.
-
-Always Attend - Main Entry Point
-Redirects to the actual main module in src/core/ and ensures runtime parity with
-platform launchers by bootstrapping the local virtual environment.
+Entry point that bootstraps Always Attend.
 """
-
 import os
 import sys
 from pathlib import Path
@@ -32,7 +27,6 @@ if str(SRC_DIR) not in sys.path:
 
 from utils.bootstrap import BootstrapError, ensure_runtime_ready  # noqa: E402
 
-
 def _print_bootstrap_error(error: BootstrapError) -> None:
     msg = (
         "[Bootstrap] {}\n"
@@ -40,7 +34,6 @@ def _print_bootstrap_error(error: BootstrapError) -> None:
         "      'pip install -r requirements.txt' and 'python -m playwright install chromium'."
     ).format(error)
     print(msg, file=sys.stderr)
-
 
 def run() -> None:
     try:
@@ -51,7 +44,6 @@ def run() -> None:
 
     from core.main import main as core_main  # noqa: E402
     core_main()
-
 
 if __name__ == "__main__":
     run()
