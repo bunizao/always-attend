@@ -117,6 +117,43 @@ python main.py --week 4
 python main.py --headed
 ```
 
+## 🧰 CLI Environment Setup
+
+### Option A — uv (recommended)
+Why uv?
+- 🔒 Deterministic installs via `uv.lock` so every machine shares the same dependency graph.
+- ⚡ Rust-powered resolver/installer that is noticeably faster than `pip` + `venv`.
+- 🧪 `uv sync` keeps the virtual env fresh without manual activation juggling (`uv run …` handles it).
+- 🌍 Handles Python download/management when the requested interpreter is missing.
+
+1. Install [uv](https://github.com/astral-sh/uv) if it is not already available:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+2. From the project root, sync dependencies and refresh the local virtual environment:
+   ```bash
+   uv sync
+   ```
+3. Install the Chromium browser bundle for Playwright:
+   ```bash
+   uv run python -m playwright install chromium
+   ```
+4. Launch the CLI (examples):
+   ```bash
+   uv run python main.py --dry-run
+   uv run python main.py --login-only
+   ```
+
+### Option B — Standard venv + pip
+```bash
+python3 -m venv .venv
+source .venv/bin/activate    # Windows: .\.venv\Scripts\activate
+pip install -U pip
+pip install -r requirements.txt
+python -m playwright install chromium
+python main.py
+```
+
 What the launchers do:
 - Check for Python (and Git if available)
 - Create/activate a virtualenv and install dependencies on first run

@@ -166,6 +166,44 @@ sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
 ```bash
 python main.py
 ```
+
+## 🧰 CLI 环境准备
+
+### 方案 A —— 使用 uv（推荐）
+为何选择 uv？
+- 🔒 通过 `uv.lock` 锁定依赖，确保不同机器的环境一致。
+- ⚡ 基于 Rust 的解析与安装速度远快于传统 `pip` + `venv`。
+- 🧪 `uv run …` 自动处理虚拟环境，无需手动激活切换。
+- 🌍 若缺少目标 Python 版本，可由 uv 自动下载/管理。
+
+1. 若本机尚未安装 [uv](https://github.com/astral-sh/uv)，可运行：
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+2. 在项目根目录同步依赖并创建/更新虚拟环境：
+   ```bash
+   uv sync
+   ```
+3. 确保 Playwright 安装 Chromium 运行时：
+   ```bash
+   uv run python -m playwright install chromium
+   ```
+4. 之后可通过 `uv run …` 执行脚本，例如：
+   ```bash
+   uv run python main.py --dry-run
+   uv run python main.py --login-only
+   ```
+
+### 方案 B —— 标准 venv + pip
+```bash
+python3 -m venv .venv
+source .venv/bin/activate    # Windows: .\.venv\Scripts\activate
+pip install -U pip
+pip install -r requirements.txt
+python -m playwright install chromium
+python main.py
+```
+
 运行后会发生什么：
 - 从 `.env` 和当前环境读取配置（确保设置 `PORTAL_URL`，考勤代码存放于 `data/` 或 `CODES_DB_PATH` 指定目录）。
 - 若未找到有效会话，将自动弹出浏览器进行单点登录 (SSO)，并显示 MFA 验证页面；完成验证后会将会话保存到 `storage_state.json`。

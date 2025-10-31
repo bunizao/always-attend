@@ -71,17 +71,13 @@ def _ensure_dependencies(project_root: Path) -> None:
     required_modules = ("playwright", "pyotp", "aiohttp", "rich")
     flag_path = venv_path / "requirements_installed.flag"
 
-    needs_install = not flag_path.exists()
-    if not needs_install:
-        for mod in required_modules:
-            if importlib.util.find_spec(mod) is None:
-                needs_install = True
-                break
+    missing_modules = [mod for mod in required_modules if importlib.util.find_spec(mod) is None]
 
-    if needs_install:
-        _run([str(python_exe), "-m", "pip", "install", "--upgrade", "pip"], project_root)
-        req_file = project_root / "requirements.txt"
-        _run([str(python_exe), "-m", "pip", "install", "-r", str(req_file)], project_root)
+    if missing_modules or not flag_path.exists():
+        if missing_modules:
+            _run([str(python_exe), "-m", "pip", "install", "--upgrade", "pip"], project_root)
+            req_file = project_root / "requirements.txt"
+            _run([str(python_exe), "-m", "pip", "install", "-r", str(req_file)], project_root)
         flag_path.touch()
 
 

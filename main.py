@@ -30,8 +30,9 @@ from utils.bootstrap import BootstrapError, ensure_runtime_ready  # noqa: E402
 def _print_bootstrap_error(error: BootstrapError) -> None:
     msg = (
         "[Bootstrap] {}\n"
-        "Tip: run 'python3 -m venv .venv && source .venv/bin/activate' followed by\n"
-        "      'pip install -r requirements.txt' and 'python -m playwright install chromium'."
+        "Tip: run 'uv sync' followed by 'uv run python -m playwright install chromium'.\n"
+        "      Alternatively, create a venv with 'python3 -m venv .venv && source .venv/bin/activate',\n"
+        "      then run 'pip install -r requirements.txt' and 'python -m playwright install chromium'."
     ).format(error)
     print(msg, file=sys.stderr)
 
