@@ -29,6 +29,7 @@ else:
     Browser = BrowserContext = Playwright = Page = Any
 
 from utils.logger import logger
+from utils.playwright_install import ensure_playwright_chromium_installed
 
 
 @dataclass
@@ -121,6 +122,20 @@ class BrowserController:
             if channel:
                 logger.warning(f"Failed to launch persistent browser with channel '{channel}': {exc}")
                 launch_kwargs["channel"] = None
+                try:
+                    self._context = await browser_type.launch_persistent_context(
+                        self._config.user_data_dir,
+                        **launch_kwargs,
+                    )
+                except Exception:
+                    if self._config.name == "chromium" and ensure_playwright_chromium_installed():
+                        self._context = await browser_type.launch_persistent_context(
+                            self._config.user_data_dir,
+                            **launch_kwargs,
+                        )
+                    else:
+                        raise
+            elif self._config.name == "chromium" and ensure_playwright_chromium_installed():
                 self._context = await browser_type.launch_persistent_context(
                     self._config.user_data_dir,
                     **launch_kwargs,
@@ -141,6 +156,14 @@ class BrowserController:
             if channel_requested:
                 logger.warning(f"Failed to launch channel '{self._config.channel}': {exc}. Retrying without channel.")
                 launch_kwargs.pop("channel", None)
+                try:
+                    self._browser = await browser_type.launch(**launch_kwargs)
+                except Exception:
+                    if self._config.name == "chromium" and ensure_playwright_chromium_installed():
+                        self._browser = await browser_type.launch(**launch_kwargs)
+                    else:
+                        raise
+            elif self._config.name == "chromium" and ensure_playwright_chromium_installed():
                 self._browser = await browser_type.launch(**launch_kwargs)
             else:
                 raise

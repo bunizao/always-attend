@@ -29,9 +29,8 @@ def _find_project_root() -> Path | None:
 def _print_bootstrap_error(error: BootstrapError) -> None:
     msg = (
         "[Bootstrap] {}\n"
-        "Tip: run 'uv sync' followed by 'uv run python -m playwright install chromium'.\n"
-        "      Alternatively, create a venv with 'python3 -m venv .venv && source .venv/bin/activate',\n"
-        "      then run 'pip install -r requirements.txt' and 'python -m playwright install chromium'."
+        "Tip: run 'uv sync' or install the requirements into a virtual environment.\n"
+        "      Chromium is downloaded automatically if Playwright needs it at runtime."
     ).format(error)
     print(msg, file=sys.stderr)
 

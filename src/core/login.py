@@ -617,7 +617,7 @@ def main():
             "Requested browser channel '%s' is unavailable; falling back to bundled Chromium.",
             channel,
         )
-        logger.info("Run 'python -m playwright install chromium' if the bundled browser is missing.")
+        logger.info("If Chromium is missing, it will be downloaded automatically.")
         channel = None
 
     if args.check_only:

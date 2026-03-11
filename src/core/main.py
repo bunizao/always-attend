@@ -224,7 +224,7 @@ async def _ensure_session(headed_default: bool) -> None:
                 logger.info(
                     "System Chrome was not detected. "
                     "Playwright's managed Chromium will be used instead. "
-                    "Run 'python -m playwright install chromium' if it is not already installed."
+                    "If Chromium is missing, it will be downloaded automatically."
                 )
     else:
         channel = channel_env

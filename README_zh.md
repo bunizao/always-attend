@@ -22,144 +22,66 @@
 
 #### 此文档由 [**ChatGPT 5**](https://chatgpt.com) 翻译，原始内容用英语编写，仅供参考。 
 
-## 📥 如何下载本项目
+## 📥 获取 Always Attend
 
-任选一种方式把项目文件夹下载到电脑：
+公开安装方式只保留两种：
 
-### 方式一：使用 Git（推荐）
-- 安装 Git：https://git-scm.com/downloads
-- macOS / Linux（终端）：
+### 方式一：`uv tool`（推荐）
+1. 若尚未安装 [uv](https://docs.astral.sh/uv/)，先执行：
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+2. 安装 `always-attend`，并同时暴露 `playwright` 可执行文件：
+   ```bash
+   uv tool install --with-executables-from playwright always-attend
+   ```
+3. 验证 CLI：
+   ```bash
+   attend --help
+   ```
+
+程序会优先使用你本机已安装的 Chrome/Edge；如果确实需要 Playwright 自带的 Chromium 且本机缺失，首次运行时会自动下载。
+
+如果安装后终端里还找不到 `attend`，执行：
+
 ```bash
-git clone https://github.com/bunizao/always-attend.git
-cd always-attend
-```
-- Windows（PowerShell 或 命令提示符）：
-```bat
-git clone https://github.com/bunizao/always-attend.git
-cd always-attend
+uv tool update-shell
 ```
 
-### 方式二：下载 ZIP（不需要 Git）
-- 打开项目主页：https://github.com/bunizao/always-attend
-- 点击绿色的“Code”按钮 → “Download ZIP”
-- 或者直接下载 ZIP 链接：https://github.com/bunizao/always-attend/archive/refs/heads/main.zip
-- 解压 ZIP：
-  - Windows：右键 ZIP → “全部解压...”
-  - macOS：双击 ZIP 自动解压
-- 打开解压后的 `always-attend` 文件夹
+### 方式二：`pipx`
+1. 若尚未安装 [pipx](https://pipx.pypa.io/stable/installation/)，先执行：
+   ```bash
+   python3 -m pip install --user pipx
+   python3 -m pipx ensurepath
+   ```
+2. 安装 `always-attend`：
+   ```bash
+   pipx install always-attend
+   ```
+3. 暴露注入包里的 `playwright` 可执行文件：
+   ```bash
+   pipx inject --include-apps always-attend playwright
+   ```
+4. 验证 CLI：
+   ```bash
+   attend --help
+   ```
 
-### 下载完成后如何运行
-- macOS：双击 `Always-Attend.command`
-- Windows：双击 `Always-Attend.bat`，或右键 `Always-Attend.ps1` → 以 PowerShell 运行
-- 首次运行会自动进入引导设置
+## 🚀 运行 CLI
 
-## 🚀 一键启动（推荐）
+公开命令入口：
 
-双击即可运行，包含首次引导设置：
-
-- macOS：双击 `Always-Attend.command`
-- Windows：双击 `Always-Attend.bat`（或运行 `Always-Attend.ps1`）
-
-统一 CLI 入口：
-
-- 已安装包后使用 `attend`
-- 偏好模块方式时使用 `python -m always_attend`
-- 在仓库目录内可继续使用 `python main.py` 作为兼容入口
-
-启动器会做什么：
-- 检查系统中的 Python（以及可选的 Git）
-- 首次运行创建并激活虚拟环境并安装依赖
-- 运行首次设置向导（门户 URL、账号、周次、浏览器）
-- 从 `data/*/*.json` 自动检测最新周并设置 `WEEK_NUMBER`
-  - 若希望每次运行都提示周次，设置 `WEEK_PROMPT=1`
-- 简化执行：直接调用 `python main.py`，无复杂菜单
-
-首次设置功能：
-- ASCII 艺术横幅
-- 首次运行显示隐私政策并征得同意
-- 学校快速配置（包含 Monash Malaysia 选项）
-- 邮箱与密码输入
-- 周次配置
-
-注意：
-- Git 可选；未安装将跳过更新步骤
-- 需要已安装 Chrome/Edge（默认使用系统浏览器）
-
-快速开始：
-```bash
-# macOS：双击 Always-Attend.command
-# Windows：双击 Always-Attend.bat
-
-# 或直接运行
-python main.py
-```
-更多运行细节与可选参数见下方“快速开始（Quick Start）”章节。
+- `attend`
 
 ## 前置条件
 
 - Python 3.11 或更高版本
 - 已安装 Google Chrome 或 Microsoft Edge 浏览器
 
-## 安装
+## 安装与首次运行
 
-0) 安装 Git
-- 从 https://git-scm.com/downloads 下载并安装
+先用上面的 `uv tool` 或 `pipx` 完成安装，再运行：
 
-1) 克隆并进入项目
-```bash
-git clone https://github.com/bunizao/always-attend.git
-cd always-attend
-```
-
-2) 创建并激活虚拟环境
-- macOS / Linux：
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-- Windows（PowerShell）：
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-若提示“已禁止运行脚本”，可执行：
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-然后再次运行 `.venv\Scripts\Activate.ps1`。若 PowerShell 仍报错，可右键以管理员身份运行 PowerShell 后重试 `Activate.ps1`。
-
-3) 安装依赖
-```bash
-pip install -U pip
-pip install -r requirements.txt
-```
-
-4) 设置环境变量
-```bash
-cp .env.example .env
-```
-使用任意编辑器修改 `.env`，快速示例（VS Code）：
-```bash
-code .env
-```
-
-重要提示：
-- Monash University Malaysia 用户：将 `PORTAL_URL` 设置为 `https://attendance.monash.edu.my`
-- 请务必包含 `https://` 前缀
-> [!IMPORTANT]
-> 本项目**未获蒙纳士大学资助、附属或认可**。
-> 
-> 这是一个独立项目，与蒙纳士大学没有任何官方联系。  
-
-也可直接在终端中更新 `PORTAL_URL`：
-```bash
-# macOS
-sed -i '' 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
-# Linux
-sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
-```
-
-5) 快速开始（Quick Start）
 ```bash
 attend
 
@@ -167,13 +89,12 @@ attend
 attend paths --json
 ```
 
-如果直接从 PyPI 安装：
-```bash
-pip install always-attend
-attend --help
-```
+安装完成后，可在用户配置目录中设置 `.env`。Monash University Malaysia 用户请将 `PORTAL_URL` 设为 `https://attendance.monash.edu.my`，并保留 `https://` 前缀。
 
-`attend` 是主入口；仓库内的 `python main.py` 仍然保留，作为同一套 CLI 的兼容入口。
+> [!IMPORTANT]
+> 本项目**未获蒙纳士大学资助、附属或认可**。
+>
+> 这是一个独立项目，与蒙纳士大学没有任何官方联系。
 
 运行时文件现在默认放到标准用户目录：
 - Linux：
@@ -194,41 +115,39 @@ attend --help
 - CLI：`attend paths --json`
 - Python：`from always_attend import get_runtime_paths_dict`
 
-## 🧰 CLI 环境准备
+## 🧰 CLI 安装细节
 
-### 方案 A —— 使用 uv（推荐）
-为何选择 uv？
-- 🔒 通过 `uv.lock` 锁定依赖，确保不同机器的环境一致。
-- ⚡ 基于 Rust 的解析与安装速度远快于传统 `pip` + `venv`。
-- 🧪 `uv run …` 自动处理虚拟环境，无需手动激活切换。
-- 🌍 若缺少目标 Python 版本，可由 uv 自动下载/管理。
+### 方案 A —— `uv tool`（推荐）
+- 最适合把 `attend` 当作独立 CLI 安装到当前用户环境。
+- 安装快，且不会污染你的项目虚拟环境。
 
-1. 若本机尚未安装 [uv](https://github.com/astral-sh/uv)，可运行：
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-2. 在项目根目录同步依赖并创建/更新虚拟环境：
-   ```bash
-   uv sync
-   ```
-3. 确保 Playwright 安装 Chromium 运行时：
-   ```bash
-   uv run python -m playwright install chromium
-   ```
-4. 之后可通过 `uv run …` 执行脚本，例如：
-   ```bash
-   uv run attend --dry-run
-   uv run attend login
-   ```
-
-### 方案 B —— 标准 venv + pip
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate    # Windows: .\.venv\Scripts\activate
-pip install -U pip
-pip install -e .
-python -m playwright install chromium
-attend
+uv tool install --with-executables-from playwright always-attend
+attend --dry-run
+```
+
+如果运行时需要 Chromium 而本机尚未安装，程序会自动下载。
+
+后续升级：
+
+```bash
+uv tool upgrade always-attend
+```
+
+### 方案 B —— `pipx`
+- 适合已经用 `pipx` 管理 Python CLI 的环境。
+- `always-attend` 会被隔离安装在单独的应用环境中。
+
+```bash
+pipx install always-attend
+pipx inject --include-apps always-attend playwright
+attend --dry-run
+```
+
+后续升级：
+
+```bash
+pipx upgrade always-attend
 ```
 
 运行后会发生什么：
@@ -259,10 +178,6 @@ export CODES_DB_BRANCH="main"
 
 每次运行时，程序都会克隆或 `git pull` 该仓库，确保本地数据始终最新。
 
-6) 更新项目
-```bash
-git pull
-```
 ---
 
 完整环境变量列表见下文（Environment Variables）。
@@ -271,11 +186,11 @@ git pull
 
 - 如果每次都要求 MFA：请再次执行有头登录以刷新本地会话文件
 - 如果浏览器无法启动：确认已安装 Chrome 或 Edge，或设置 `BROWSER_CHANNEL=chrome/msedge`
-- Windows 若激活脚本失败：以管理员身份打开 PowerShell，再运行 `.venv\Scripts\Activate.ps1`
+- 如果安装后找不到 `attend`：重开终端，再执行 `uv tool update-shell` 或 `python3 -m pipx ensurepath`
 - 运行时请勿使用 VPN，这可能导致 Okta 拒绝连接。
 ## 常见问题（Windows）
 
-- **`python` 与 `py`**：在部分 Windows 环境中 `python` 命令不可用或指向其它版本，可使用 `py` 代替，如 `py -m venv .venv`、`py main.py`。
+- **`python` 与 `py`**：在部分 Windows 环境中 `python` 命令不可用或指向其它版本，可使用 `py` 执行引导命令，例如 `py -m pip install --user pipx`。
 - **切换 Git Bash 与 PowerShell**：在 VS Code 等终端的下拉菜单中可选择 "Git Bash" 或 "PowerShell"；某些命令（如 `source`）仅在 Git Bash 可用，而 PowerShell 使用 `.\` 调用脚本。
 - **路径转义问题**：PowerShell 使用反斜杠（`\`），可能被视为转义字符；请使用引号或双反斜杠，如 `C:\path\to\file`。Git Bash 则使用正斜杠（`/`）。
 

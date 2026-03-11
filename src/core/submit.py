@@ -36,6 +36,7 @@ from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from core.stats import StatsManager
 from utils.browser_detection import is_browser_channel_available
+from utils.playwright_install import ensure_playwright_chromium_installed
 
 try:
     from utils.simple_progress import ProgressTracker, TaskInfo, create_task_list_from_targets
@@ -886,7 +887,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                     "Requested browser channel '%s' is unavailable; falling back to bundled Chromium.",
                     channel,
                 )
-                logger.info("Run 'python -m playwright install chromium' if the bundled browser is missing.")
+                logger.info("If Chromium is missing, it will be downloaded automatically.")
                 channel = None
         else:
             if is_browser_channel_available("chrome"):
@@ -897,7 +898,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                 logger.info(
                     "No system Chrome or Edge detected. "
                     "Playwright's managed Chromium will be used. "
-                    "Run 'python -m playwright install chromium' if it has not been installed."
+                    "If Chromium is missing, it will be downloaded automatically."
                 )
                 channel = None
     headless_env = os.getenv("HEADLESS", "1")
@@ -933,8 +934,16 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             if channel:
                 logger.warning(f"Failed to launch system browser ({channel}): {e}")
                 progress("Falling back to default browser...")
-            launch_kwargs.pop("channel", None)
-            browser = await browser_type.launch(**launch_kwargs)
+                launch_kwargs.pop("channel", None)
+                if browser_name == "chromium":
+                    browser = await browser_type.launch(**launch_kwargs)
+                else:
+                    browser = await browser_type.launch(**launch_kwargs)
+            else:
+                if browser_name == "chromium" and ensure_playwright_chromium_installed():
+                    browser = await browser_type.launch(**launch_kwargs)
+                else:
+                    raise
         
         # Load session if available
         context_kwargs = {}

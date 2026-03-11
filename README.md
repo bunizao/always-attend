@@ -26,49 +26,56 @@
 
 
 
-## 📥 Download This Project
+## 📥 Get Always Attend
 
-Choose one method to get the folder onto your computer:
+Install the CLI using one of these two supported flows:
 
-### Option 1 — Git (recommended)
-- Install Git: https://git-scm.com/downloads
-- macOS/Linux:
+### Option 1 — `uv tool` (recommended)
+1. Install [uv](https://docs.astral.sh/uv/) if it is not already available:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+2. Install `always-attend` and expose the bundled `playwright` executable:
+   ```bash
+   uv tool install --with-executables-from playwright always-attend
+   ```
+3. Verify the CLI:
+   ```bash
+   attend --help
+   ```
+
+The app prefers your installed Chrome/Edge. If Playwright Chromium is needed and missing, it will be downloaded automatically on first run.
+
+If `attend` is not on your shell `PATH` yet, run:
+
 ```bash
-git clone https://github.com/bunizao/always-attend.git
-cd always-attend
-```
-- Windows (PowerShell or Command Prompt):
-```bat
-git clone https://github.com/bunizao/always-attend.git
-cd always-attend
+uv tool update-shell
 ```
 
-### Option 2 — Download ZIP (no Git needed)
-- Open the project page: https://github.com/bunizao/always-attend
-- Click the green "Code" button → "Download ZIP"
-- Or direct ZIP link: https://github.com/bunizao/always-attend/archive/refs/heads/main.zip
-- Extract the ZIP:
-  - Windows: right‑click the ZIP → "Extract All..."
-  - macOS: double‑click the ZIP to extract
-- Open the extracted `always-attend` folder
+### Option 2 — `pipx`
+1. Install [pipx](https://pipx.pypa.io/stable/installation/) if needed:
+   ```bash
+   python3 -m pip install --user pipx
+   python3 -m pipx ensurepath
+   ```
+2. Install `always-attend`:
+   ```bash
+   pipx install always-attend
+   ```
+3. Expose the `playwright` executable from the injected package:
+   ```bash
+   pipx inject --include-apps always-attend playwright
+   ```
+4. Verify the CLI:
+   ```bash
+   attend --help
+   ```
 
-### After download
-- macOS: double‑click `Always-Attend.command`
-- Windows: double‑click `Always-Attend.bat` or right‑click `Always-Attend.ps1` → Run with PowerShell
-- The first run will guide setup automatically
+## 🚀 Run The CLI
 
-## 🚀 Easy Launch
+Public command:
 
-Double‑click to run with the enhanced first‑time setup:
-
-- macOS: double‑click `Always-Attend.command`
-- Windows: double‑click `Always-Attend.bat` (or run `Always-Attend.ps1`)
-
-Primary CLI entrypoints:
-
-- `attend` after installing the package into your environment
-- `python -m always_attend` if you prefer module execution
-- `python main.py` as the repository-local compatibility entrypoint
+- `attend`
 
 ## 📋 Application Workflow
 
@@ -117,13 +124,7 @@ attend week 4
 attend --headed
 ```
 
-Install from PyPI:
-```bash
-pip install always-attend
-attend --help
-```
-
-`attend` is the primary CLI. `python main.py` remains available inside the repository checkout and forwards to the same command flow.
+Install with `uv tool` or `pipx`, then run `attend --help`.
 
 Runtime files now default to standard user directories:
 - Linux:
@@ -144,52 +145,40 @@ Integration contract:
 - CLI: `attend paths --json`
 - Python: `from always_attend import get_runtime_paths_dict`
 
-## 🧰 CLI Environment Setup
+## 🧰 CLI Installation Details
 
-### Option A — uv (recommended)
-Why uv?
-- 🔒 Deterministic installs via `uv.lock` so every machine shares the same dependency graph.
-- ⚡ Rust-powered resolver/installer that is noticeably faster than `pip` + `venv`.
-- 🧪 `uv sync` keeps the virtual env fresh without manual activation juggling (`uv run …` handles it).
-- 🌍 Handles Python download/management when the requested interpreter is missing.
+### Option A — `uv tool` (recommended)
+- Fastest setup for a standalone CLI install.
+- Keeps the command isolated from your project environments.
+- Use this when you want `attend` available globally for your user.
 
-1. Install [uv](https://github.com/astral-sh/uv) if it is not already available:
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-2. From the project root, sync dependencies and refresh the local virtual environment:
-   ```bash
-   uv sync
-   ```
-3. Install the Chromium browser bundle for Playwright:
-   ```bash
-   uv run python -m playwright install chromium
-   ```
-4. Launch the CLI (examples):
-   ```bash
-   uv run attend --dry-run
-   uv run attend login
-   ```
-
-### Option B — Standard venv + pip
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate    # Windows: .\.venv\Scripts\activate
-pip install -U pip
-pip install -e .
-python -m playwright install chromium
-attend
+uv tool install --with-executables-from playwright always-attend
+attend --dry-run
 ```
 
-What the desktop launchers do:
-- Check for Python (and Git if available)
-- Create/activate a virtualenv and install dependencies on first run
-- Run a first‑time setup wizard (portal URL, credentials, week, browser)
-- Auto‑detect the latest week from `data/*/*.json` and set `WEEK_NUMBER`
+If Chromium is needed and not installed yet, the app will download it automatically.
 
-Update later:
+Upgrade later:
+
 ```bash
-git pull
+uv tool upgrade always-attend
+```
+
+### Option B — `pipx`
+- Good fit if you already manage Python CLIs with `pipx`.
+- Keeps `always-attend` isolated in its own application environment.
+
+```bash
+pipx install always-attend
+pipx inject --include-apps always-attend playwright
+attend --dry-run
+```
+
+Upgrade later:
+
+```bash
+pipx upgrade always-attend
 ```
 
 ---
@@ -265,12 +254,12 @@ Set these in your `.env` to persist the chosen style across runs.
 
 - If login keeps asking for MFA: re-run the headed login to refresh the saved session state
 - If the browser fails to launch: make sure Google Chrome or Microsoft Edge is installed, or set `BROWSER_CHANNEL` to `chrome`/`msedge`.
-- On Windows, if activation fails, run PowerShell as Administrator once, then try `.venv\Scripts\Activate.ps1` again.
+- If `attend` is not found after install: restart the terminal, then run `uv tool update-shell` or `python3 -m pipx ensurepath`.
 - When running, please do NOT use a VPN, as this may cause Okta to refuse the connection.
 
 ## FAQ (Windows)
 
-- **Use `py` instead of `python`**: If `python` isn't found or points to another version, use `py` (e.g., `py -m venv .venv`, `py main.py`).
+- **Use `py` instead of `python`**: If `python` isn't found or points to another version, use `py` for bootstrap commands such as `py -m pip install --user pipx`.
 - **Switching between Git Bash and PowerShell**: In terminals like VS Code, use the dropdown to open a new Git Bash or PowerShell window. Some commands (e.g., `source`) only work in Git Bash, while PowerShell uses `.\` for scripts.
 - **Path escaping issues**: PowerShell uses backslashes (`\`) and may treat them as escape characters. Wrap paths in quotes or use double backslashes like `C:\path\to\file`. Git Bash uses forward slashes (`/`).
 
@@ -294,7 +283,7 @@ Primary command: `attend`
 
 ## Release Automation
 
-- Push a version tag such as `v0.1.0` to trigger `.github/workflows/release.yml`.
+- Push a version tag such as `v0.1.1` to trigger `.github/workflows/release.yml`.
 - The workflow validates that the tag matches `pyproject.toml`, builds `sdist` and `wheel`, creates a GitHub Release, and publishes to PyPI.
 - PyPI publishing is configured for Trusted Publishing, so the GitHub repository still needs to be registered as a trusted publisher in the target PyPI project.
 
