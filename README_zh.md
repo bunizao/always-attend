@@ -164,8 +164,16 @@ sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
 
 5) 快速开始（Quick Start）
 ```bash
-python main.py
+attend
 ```
+
+如果直接从 PyPI 安装：
+```bash
+pip install always-attend
+attend --help
+```
+
+仓库内的 `python main.py` 仍然保留，作为兼容入口。
 
 ## 🧰 CLI 环境准备
 
@@ -190,8 +198,8 @@ python main.py
    ```
 4. 之后可通过 `uv run …` 执行脚本，例如：
    ```bash
-   uv run python main.py --dry-run
-   uv run python main.py --login-only
+   uv run attend --dry-run
+   uv run attend login
    ```
 
 ### 方案 B —— 标准 venv + pip
@@ -199,9 +207,9 @@ python main.py
 python3 -m venv .venv
 source .venv/bin/activate    # Windows: .\.venv\Scripts\activate
 pip install -U pip
-pip install -r requirements.txt
+pip install -e .
 python -m playwright install chromium
-python main.py
+attend
 ```
 
 运行后会发生什么：

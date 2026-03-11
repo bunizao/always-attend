@@ -102,20 +102,28 @@ When using Login Only mode:
 ### Quick Start
 ```bash
 # Basic execution
-python main.py
+attend
 
 # View statistics
-python main.py --stats
+attend stats
 
 # Refresh login session
-python main.py --login-only
+attend login
 
 # Run specific week
-python main.py --week 4
+attend week 4
 
 # Show browser (headed mode)
-python main.py --headed
+attend --headed
 ```
+
+Install from PyPI:
+```bash
+pip install always-attend
+attend --help
+```
+
+`python main.py` remains available as a compatibility launcher inside the repository checkout.
 
 ## 🧰 CLI Environment Setup
 
@@ -140,8 +148,8 @@ Why uv?
    ```
 4. Launch the CLI (examples):
    ```bash
-   uv run python main.py --dry-run
-   uv run python main.py --login-only
+   uv run attend --dry-run
+   uv run attend login
    ```
 
 ### Option B — Standard venv + pip
@@ -149,9 +157,9 @@ Why uv?
 python3 -m venv .venv
 source .venv/bin/activate    # Windows: .\.venv\Scripts\activate
 pip install -U pip
-pip install -r requirements.txt
+pip install -e .
 python -m playwright install chromium
-python main.py
+attend
 ```
 
 What the launchers do:
@@ -194,7 +202,7 @@ The tool now automatically tracks your attendance submission statistics:
 
 ```bash
 # View detailed statistics
-python main.py --stats
+attend stats
 
 # Or use the stats module directly
 python stats.py
@@ -226,10 +234,10 @@ Always Attend ships with a polished terminal UI powered by [Rich](https://github
 
 ```bash
 # Full experience: animated banner, live block progress
-CLI_STYLE=fancy CLI_PROGRESS_RICH=1 python main.py --dry-run
+CLI_STYLE=fancy CLI_PROGRESS_RICH=1 attend --dry-run
 
 # Quiet fallback suitable for basic terminals
-CLI_STYLE=minimal CLI_PROGRESS_RICH=0 python main.py
+CLI_STYLE=minimal CLI_PROGRESS_RICH=0 attend
 ```
 
 Set these in your `.env` to persist the chosen style across runs.
@@ -249,7 +257,7 @@ Set these in your `.env` to persist the chosen style across runs.
 
 ## Command-Line Arguments
 
-main.py
+Primary command: `attend`
 
 | Argument | Type | Description | Example |
 | --- | --- | --- | --- |
@@ -264,6 +272,12 @@ main.py
 | `--debug` | flag | Enable debug logging profile | `--debug` |
 | `--verbose` | flag | Enable verbose logging profile | `--verbose` |
 | `--skip-update` | flag | Skip the git update check before running | `--skip-update` |
+
+## Release Automation
+
+- Push a version tag such as `v0.1.0` to trigger `.github/workflows/release.yml`.
+- The workflow validates that the tag matches `pyproject.toml`, builds `sdist` and `wheel`, creates a GitHub Release, and publishes to PyPI.
+- PyPI publishing is configured for Trusted Publishing, so the GitHub repository still needs to be registered as a trusted publisher in the target PyPI project.
 
 ## Environment Variables
 
