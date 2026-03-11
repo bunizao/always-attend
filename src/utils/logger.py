@@ -23,9 +23,11 @@ import itertools
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 __all__ = [
+    "apply_env_configuration",
     "logger",
     "step",
     "progress",
@@ -363,3 +365,43 @@ def set_log_profile(profile: str) -> None:
     global LOG_PROFILE
     LOG_PROFILE = profile
     os.environ["LOG_PROFILE"] = profile
+
+
+def apply_env_configuration() -> None:
+    """Apply LOG_PROFILE and LOG_FILE after environment loading."""
+    profile = (os.getenv("LOG_PROFILE") or LOG_PROFILE or "user").lower()
+    set_log_profile(profile)
+
+    desired_log = os.getenv("LOG_FILE", "").strip()
+    base_logger = logging.getLogger("always_attend")
+    existing_file_handlers = [
+        handler
+        for handler in base_logger.handlers
+        if isinstance(handler, logging.FileHandler)
+    ]
+
+    if not desired_log:
+        for handler in existing_file_handlers:
+            base_logger.removeHandler(handler)
+            handler.close()
+        return
+
+    target_path = Path(desired_log).expanduser()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for handler in existing_file_handlers:
+        current_path = getattr(handler, "baseFilename", "")
+        if current_path == str(target_path):
+            return
+        base_logger.removeHandler(handler)
+        handler.close()
+
+    file_handler = logging.FileHandler(target_path, encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    file_handler.setLevel(logging.DEBUG)
+    base_logger.addHandler(file_handler)

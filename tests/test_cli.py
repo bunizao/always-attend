@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
 from always_attend.argv import normalize_cli_argv
+from always_attend.runtime_contract import get_runtime_paths_dict
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +60,19 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertEqual(normalize_cli_argv(["login", "--headed"]), ["--login-only", "--headed"])
         self.assertEqual(normalize_cli_argv(["week", "5", "--dry-run"]), ["--week", "5", "--dry-run"])
         self.assertEqual(normalize_cli_argv(["week", "--help"]), ["--help"])
+
+    def test_paths_builtin_json(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "paths", "--json")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["contract_version"], "1")
+        self.assertIn("env_file", payload)
+        self.assertIn("storage_state_file", payload)
+
+    def test_paths_python_api(self) -> None:
+        payload = get_runtime_paths_dict()
+        self.assertEqual(payload["contract_version"], "1")
+        self.assertIn("codes_db_path", payload)
 
 
 if __name__ == "__main__":

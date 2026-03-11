@@ -30,8 +30,9 @@ from typing import Optional, Dict
 
 from always_attend import __version__
 from always_attend.argv import CLI_EXAMPLES, normalize_cli_argv
+from always_attend.paths import codes_db_path, env_file as default_env_file, portal_state_file, storage_state_file, user_data_dir as default_user_data_dir
 from utils.env_utils import load_env, ensure_env_file, append_to_env_file
-from utils.logger import logger, step, success, set_log_profile
+from utils.logger import apply_env_configuration, logger, step, success, set_log_profile
 from utils.session import is_storage_state_effective
 from config.config_wizard import ConfigWizard
 from utils.console import PortalConsole
@@ -52,7 +53,7 @@ class PortalState:
     """Persisted state for the CLI portal experience."""
 
     def __init__(self, path: Optional[Path] = None):
-        default_path = Path(os.getenv("PORTAL_STATE_FILE", ".portal_state.json"))
+        default_path = portal_state_file()
         self.path = path or default_path
         self.data: Dict[str, bool] = {
             "welcome_ack": False,
@@ -158,7 +159,7 @@ class PortalExperience:
 
         set_language(selected_code)
         os.environ["LANGUAGE_PREFERENCE"] = selected_code
-        env_file = os.getenv("ENV_FILE", ".env")
+        env_file = str(default_env_file())
         _ensure_env_file(env_file)
         _append_to_env_file(env_file, "LANGUAGE_PREFERENCE", selected_code)
         selected_label = languages.get(selected_code, selected_code)
@@ -228,8 +229,9 @@ async def _ensure_session(headed_default: bool) -> None:
     else:
         channel = channel_env
 
-    storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
-    user_data_dir = os.getenv("USER_DATA_DIR")
+    storage_state = str(storage_state_file())
+    resolved_user_data_dir = default_user_data_dir()
+    user_data_dir = str(resolved_user_data_dir) if resolved_user_data_dir is not None else None
 
     needs_login = False
     if user_data_dir:
@@ -272,8 +274,9 @@ async def _run_submit(dry_run: bool, target_email: Optional[str] = None) -> None
 
 
 def main(argv: Optional[list[str]] = None):
-    load_env(os.getenv('ENV_FILE', '.env'))
-    codes_root = Path(os.getenv('CODES_DB_PATH', 'data')).expanduser().resolve()
+    load_env(str(default_env_file()))
+    apply_env_configuration()
+    codes_root = codes_db_path().expanduser().resolve()
     logger.debug("Using codes directory: %s", codes_root)
 
     parser = argparse.ArgumentParser(
@@ -323,7 +326,8 @@ def main(argv: Optional[list[str]] = None):
             step("Launching configuration wizard")
             wizard = ConfigWizard()
             wizard.run()
-            load_env(os.getenv('ENV_FILE', '.env'))
+            load_env(str(default_env_file()))
+            apply_env_configuration()
         else:
             ConfigWizard.mark_setup_complete()
             logger.info("Skipping configuration wizard; re-run with --setup when needed.")

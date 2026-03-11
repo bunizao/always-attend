@@ -24,13 +24,14 @@ import getpass
 from pathlib import Path
 from typing import Dict, Optional
 
+from always_attend.paths import default_env_template, env_file as default_env_file, env_template_file, setup_sentinel_file
 from utils.logger import logger
 
 class ConfigWizard:
     """Interactive configuration wizard for first-time setup"""
     
-    def __init__(self, env_file: str = ".env"):
-        self.env_file = env_file
+    def __init__(self, env_file: str | None = None):
+        self.env_file = str(default_env_file() if env_file is None else Path(env_file).expanduser())
         self.config = {}
         
     def run(self) -> bool:
@@ -79,27 +80,25 @@ class ConfigWizard:
         
     def _ensure_env_file(self) -> None:
         """Ensure .env file exists by copying from .env.example if needed"""
-        env_example_path = ".env.example"
+        env_example = env_template_file()
+        env_example_path = str(env_example) if env_example is not None else None
+        Path(self.env_file).parent.mkdir(parents=True, exist_ok=True)
         
         if not os.path.exists(self.env_file):
-            if os.path.exists(env_example_path):
+            if env_example_path and os.path.exists(env_example_path):
                 try:
                     shutil.copy2(env_example_path, self.env_file)
                     logger.info(f"Created {self.env_file} from {env_example_path}")
                     print(f"✅ Created {self.env_file} from template")
                 except Exception as e:
                     logger.error(f"Failed to copy {env_example_path} to {self.env_file}: {e}")
-                    # Create a minimal .env file as fallback
                     with open(self.env_file, 'w', encoding='utf-8') as f:
-                        f.write("# Always Attend Configuration\n")
-                        f.write("# Created by configuration wizard\n\n")
+                        f.write(default_env_template())
                     print(f"⚠️ Created minimal {self.env_file} file")
             else:
-                logger.warning(f"{env_example_path} not found, creating minimal {self.env_file}")
-                # Create a minimal .env file
+                logger.warning("Configuration template not found, creating minimal %s", self.env_file)
                 with open(self.env_file, 'w', encoding='utf-8') as f:
-                    f.write("# Always Attend Configuration\n")
-                    f.write("# Created by configuration wizard\n\n")
+                    f.write(default_env_template())
                 print(f"⚠️ Created minimal {self.env_file} file")
         else:
             logger.debug(f"{self.env_file} already exists")
@@ -300,12 +299,13 @@ class ConfigWizard:
     def should_run_wizard() -> bool:
         """Check if the wizard should run (first time setup)"""
         # If launchers have already completed first-time setup, skip
-        if os.path.exists(".first_time_setup_complete"):
+        if setup_sentinel_file().exists():
             return False
         # Check if .env exists and has some configuration
-        if os.path.exists(".env"):
+        target_env = default_env_file()
+        if target_env.exists():
             try:
-                with open(".env", 'r') as f:
+                with target_env.open('r', encoding='utf-8') as f:
                     content = f.read()
                     # If .env has more than just basic configuration, assume setup is done
                     config_lines = [line for line in content.split('\\n') 
@@ -332,10 +332,12 @@ class ConfigWizard:
             return False
 
     @staticmethod
-    def mark_setup_complete(flag_path: str = ".first_time_setup_complete") -> None:
+    def mark_setup_complete(flag_path: str | None = None) -> None:
         """Persist a sentinel file so the wizard runs only once."""
         try:
-            Path(flag_path).touch(exist_ok=True)
+            target = setup_sentinel_file() if flag_path is None else Path(flag_path).expanduser()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.touch(exist_ok=True)
         except Exception as exc:
             logger.warning("Unable to mark setup completion: %s", exc)
 

@@ -20,10 +20,12 @@ import os
 import argparse
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional
 
 from playwright.async_api import Page
-from utils.logger import logger, debug_detail
+from always_attend.paths import ensure_parent, env_file as default_env_file, storage_state_file, user_data_dir as default_user_data_dir
+from utils.logger import apply_env_configuration, logger, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from utils.playwright_helpers import fill_first_match, click_first_match, maybe_switch_to_code_factor
@@ -46,7 +48,7 @@ class LoginConfig:
     browser_name: str = "chromium"
     channel: Optional[str] = None
     headed: bool = True
-    storage_state: str = "storage_state.json"
+    storage_state: str = str(storage_state_file())
     user_data_dir: Optional[str] = None
     auto_login_enabled: bool = True
     timeout_ms: int = 60000
@@ -446,6 +448,7 @@ class LoginWorkflow:
         if self.config.user_data_dir:
             return
         try:
+            ensure_parent(Path(self.config.storage_state))
             await controller.context.storage_state(path=self.config.storage_state)
             if is_storage_state_effective(self.config.storage_state):
                 if auto_success:
@@ -488,7 +491,7 @@ async def run_login(portal_url: str,
                     browser_name: str = "chromium",
                     channel: str | None = None,
                     headed: bool = True,
-                    storage_state: str = "storage_state.json",
+                    storage_state: str = str(storage_state_file()),
                     user_data_dir: str | None = None,
                     auto_login_enabled: bool = True) -> None:
     config = LoginConfig(
@@ -508,7 +511,7 @@ async def check_session(check_url: str,
                         browser_name: str = "chromium",
                         channel: str | None = None,
                         headed: bool = False,
-                        storage_state: str = "storage_state.json",
+                        storage_state: str = str(storage_state_file()),
                         user_data_dir: str | None = None) -> bool:
     config = LoginConfig(
         portal_url=check_url,
@@ -524,7 +527,8 @@ async def check_session(check_url: str,
     return await workflow.check_session()
 
 def main():
-    load_env(os.getenv("ENV_FILE", ".env"))
+    load_env(str(default_env_file()))
+    apply_env_configuration()
 
     default_channel = os.getenv("BROWSER_CHANNEL")
     if not default_channel and is_browser_channel_available("chrome"):
@@ -535,8 +539,9 @@ def main():
     parser.add_argument("--browser", default=os.getenv("BROWSER", "chromium"), choices=["chromium", "firefox", "webkit"], help="Browser engine")
     parser.add_argument("--channel", default=default_channel, help="Chromium channel: chrome|chrome-beta|msedge|msedge-beta")
     parser.add_argument("--headed", action="store_true", help="Show browser UI (recommended)")
-    parser.add_argument("--storage-state", default=os.getenv("STORAGE_STATE", "storage_state.json"), help="Path to save storage_state.json")
-    parser.add_argument("--user-data-dir", default=os.getenv("USER_DATA_DIR"), help="Persistent profile directory (optional)")
+    parser.add_argument("--storage-state", default=str(storage_state_file()), help="Path to save the session state file")
+    default_profile_dir = default_user_data_dir()
+    parser.add_argument("--user-data-dir", default=(str(default_profile_dir) if default_profile_dir is not None else None), help="Persistent profile directory (optional)")
     parser.add_argument("--check", action="store_true", help="After saving session, verify login by opening the portal again")
     parser.add_argument("--check-only", action="store_true", help="Do not open login; only verify current session state")
     args = parser.parse_args()

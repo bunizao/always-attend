@@ -30,7 +30,8 @@ import re
 
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
 
-from utils.logger import logger, step, progress, success, debug_detail
+from always_attend.paths import codes_db_path, env_file as default_env_file, stats_file as default_stats_file, storage_state_file
+from utils.logger import apply_env_configuration, logger, step, progress, success, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
 from core.stats import StatsManager
@@ -50,8 +51,7 @@ def to_base(origin_url: str) -> str:
     return urlunparse((pu.scheme, pu.netloc, "", "", "", ""))
 
 def _data_root() -> Path:
-    raw = os.getenv("CODES_DB_PATH", "data")
-    return Path(raw).expanduser().resolve()
+    return codes_db_path().expanduser().resolve()
 
 MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -865,7 +865,8 @@ async def collect_day_anchors(page: Page, base: str, start_monday: Optional[date
 async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> None:
     """Main submission logic."""
     
-    load_env(os.getenv("ENV_FILE", ".env"))
+    load_env(str(default_env_file()))
+    apply_env_configuration()
     
     portal_url = os.getenv("PORTAL_URL")
     if not portal_url:
@@ -901,9 +902,9 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                 channel = None
     headless_env = os.getenv("HEADLESS", "1")
     headed = (headless_env in ("0", "false", "False"))
-    storage_state = os.getenv("STORAGE_STATE", "storage_state.json")
+    storage_state = str(storage_state_file())
     
-    stats = StatsManager()
+    stats = StatsManager(str(default_stats_file()))
     progress_tracker = ProgressTracker() if SIMPLE_PROGRESS_AVAILABLE else None
     
     async with async_playwright() as p:

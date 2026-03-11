@@ -64,14 +64,11 @@ Double‑click to run with the enhanced first‑time setup:
 - macOS: double‑click `Always-Attend.command`
 - Windows: double‑click `Always-Attend.bat` (or run `Always-Attend.ps1`)
 
-## 🪄 Quick Share Launcher (`launch.py`)
+Primary CLI entrypoints:
 
-Want to drop a single file on another machine and get going? Run the bundled `launch.py` script:
-
-- Prompts for the install location (defaults to the current folder)
-- Clones `always-attend`, creates/updates `.venv`, installs dependencies, and copies `.env.example`
-- Lets you choose UI login, headless mode, or `--dry-run`, then runs `main.py` or prints the launch command
-- Perfect for rapid sharing in chats or classrooms—just send `launch.py`, then run `python launch.py`
+- `attend` after installing the package into your environment
+- `python -m always_attend` if you prefer module execution
+- `python main.py` as the repository-local compatibility entrypoint
 
 ## 📋 Application Workflow
 
@@ -110,6 +107,9 @@ attend stats
 # Refresh login session
 attend login
 
+# Inspect resolved runtime paths for integrations
+attend paths --json
+
 # Run specific week
 attend week 4
 
@@ -123,7 +123,26 @@ pip install always-attend
 attend --help
 ```
 
-`python main.py` remains available as a compatibility launcher inside the repository checkout.
+`attend` is the primary CLI. `python main.py` remains available inside the repository checkout and forwards to the same command flow.
+
+Runtime files now default to standard user directories:
+- Linux:
+  `~/.config/always-attend/.env`,
+  `~/.local/state/always-attend/`,
+  `~/.local/share/always-attend/data/`
+- macOS:
+  `~/Library/Application Support/always-attend/config/.env`,
+  `~/Library/Application Support/always-attend/state/`,
+  `~/Library/Application Support/always-attend/data/`
+- Windows:
+  `%APPDATA%\\always-attend\\config\\.env`,
+  `%LOCALAPPDATA%\\always-attend\\state\\`,
+  `%LOCALAPPDATA%\\always-attend\\data\\`
+- Override any location with env vars such as `ENV_FILE`, `STORAGE_STATE`, `ATTENDANCE_STATS_FILE`, or `CODES_DB_PATH`
+
+Integration contract:
+- CLI: `attend paths --json`
+- Python: `from always_attend import get_runtime_paths_dict`
 
 ## 🧰 CLI Environment Setup
 
@@ -162,7 +181,7 @@ python -m playwright install chromium
 attend
 ```
 
-What the launchers do:
+What the desktop launchers do:
 - Check for Python (and Git if available)
 - Create/activate a virtualenv and install dependencies on first run
 - Run a first‑time setup wizard (portal URL, credentials, week, browser)
@@ -244,7 +263,7 @@ Set these in your `.env` to persist the chosen style across runs.
 
 ## Troubleshooting
 
-- If login keeps asking for MFA: re-run the headed login to refresh `storage_state.json`
+- If login keeps asking for MFA: re-run the headed login to refresh the saved session state
 - If the browser fails to launch: make sure Google Chrome or Microsoft Edge is installed, or set `BROWSER_CHANNEL` to `chrome`/`msedge`.
 - On Windows, if activation fails, run PowerShell as Administrator once, then try `.venv\Scripts\Activate.ps1` again.
 - When running, please do NOT use a VPN, as this may cause Okta to refuse the connection.

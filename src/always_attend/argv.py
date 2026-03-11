@@ -8,6 +8,7 @@ CLI_EXAMPLES = (
     "  attend\n"
     "  attend stats\n"
     "  attend login\n"
+    "  attend paths --json\n"
     "  attend week 4\n"
     "  attend week 4 --dry-run"
 )

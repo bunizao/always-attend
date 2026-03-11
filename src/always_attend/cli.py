@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from always_attend.argv import normalize_cli_argv
+from always_attend.runtime_contract import get_runtime_paths_dict, get_runtime_paths_json
 from utils.bootstrap import BootstrapError, ensure_runtime_ready
 
 
@@ -35,8 +36,27 @@ def _print_bootstrap_error(error: BootstrapError) -> None:
     print(msg, file=sys.stderr)
 
 
+def _handle_builtin_command(argv: list[str]) -> bool:
+    if not argv or argv[0] != "paths":
+        return False
+
+    as_json = "--json" in argv[1:]
+    payload = get_runtime_paths_json() if as_json else get_runtime_paths_dict()
+
+    if as_json:
+        print(payload)
+    else:
+        for key, value in payload.items():
+            print(f"{key}={value}")
+    return True
+
+
 def main() -> None:
-    normalized_argv = normalize_cli_argv(sys.argv[1:])
+    raw_argv = sys.argv[1:]
+    if _handle_builtin_command(raw_argv):
+        return
+
+    normalized_argv = normalize_cli_argv(raw_argv)
 
     if _is_non_runtime_command(normalized_argv):
         from core.main import main as core_main

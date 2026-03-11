@@ -19,16 +19,18 @@ Attendance statistics reporting utilities.
 import os
 import json
 import argparse
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
 
-from utils.logger import logger
+from always_attend.paths import ensure_parent, env_file as default_env_file, stats_file as default_stats_file
+from utils.logger import apply_env_configuration, logger
 from utils.env_utils import load_env
 
 class StatsManager:
-    def __init__(self, stats_file: str = "attendance_stats.json"):
-        self.stats_file = stats_file
+    def __init__(self, stats_file: str | None = None):
+        self.stats_file = str(default_stats_file() if stats_file is None else Path(stats_file).expanduser())
         self.stats_data = self._load_stats()
 
     def _load_stats(self) -> Dict[str, Any]:
@@ -69,6 +71,7 @@ class StatsManager:
     def _save_stats(self) -> None:
         """Save stats to file."""
         try:
+            ensure_parent(Path(self.stats_file))
             with open(self.stats_file, 'w', encoding='utf-8') as f:
                 json.dump(self.stats_data, f, indent=2, ensure_ascii=False)
         except Exception as e:
@@ -297,10 +300,11 @@ class StatsManager:
         print("\n" + "="*60)
 
 def main():
-    load_env(os.getenv('ENV_FILE', '.env'))
+    load_env(str(default_env_file()))
+    apply_env_configuration()
     
     parser = argparse.ArgumentParser(description="View attendance statistics")
-    parser.add_argument("--file", default="attendance_stats.json", help="Stats file path")
+    parser.add_argument("--file", default=str(default_stats_file()), help="Stats file path")
     parser.add_argument("--export", help="Export stats to JSON file")
     parser.add_argument("--clear", action="store_true", help="Clear all statistics")
     args = parser.parse_args()
@@ -315,9 +319,11 @@ def main():
     
     if args.export:
         summary = stats.get_summary()
-        with open(args.export, 'w', encoding='utf-8') as f:
+        export_path = Path(args.export).expanduser()
+        ensure_parent(export_path)
+        with export_path.open('w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
-        print(f"Statistics exported to {args.export}")
+        print(f"Statistics exported to {export_path}")
         return
     
     stats.print_stats()

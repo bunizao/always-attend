@@ -60,6 +60,12 @@ cd always-attend
 - macOS：双击 `Always-Attend.command`
 - Windows：双击 `Always-Attend.bat`（或运行 `Always-Attend.ps1`）
 
+统一 CLI 入口：
+
+- 已安装包后使用 `attend`
+- 偏好模块方式时使用 `python -m always_attend`
+- 在仓库目录内可继续使用 `python main.py` 作为兼容入口
+
 启动器会做什么：
 - 检查系统中的 Python（以及可选的 Git）
 - 首次运行创建并激活虚拟环境并安装依赖
@@ -88,15 +94,6 @@ cd always-attend
 python main.py
 ```
 更多运行细节与可选参数见下方“快速开始（Quick Start）”章节。
-
-## 🪄 快速分享脚本（`launch.py`）
-
-只想共享一个文件给同学或在干净环境里快速启动？使用根目录的 `launch.py`：
-
-- 会询问安装目录（默认使用当前目录）
-- 自动克隆 `always-attend` 仓库，创建/更新 `.venv`，安装依赖并复制 `.env.example`
-- 提供“交互登录”“默认”“`--dry-run`”三种运行模式，并可立即调用 `main.py`
-- 适合课堂演示或临时电脑：发送 `launch.py`，在目标机器上执行 `python launch.py` 即可
 
 ## 前置条件
 
@@ -165,6 +162,9 @@ sed -i 's/^PORTAL_URL=.*/PORTAL_URL="https:\/\/your.portal.url"/' .env
 5) 快速开始（Quick Start）
 ```bash
 attend
+
+# 查看可集成的运行时路径
+attend paths --json
 ```
 
 如果直接从 PyPI 安装：
@@ -173,7 +173,26 @@ pip install always-attend
 attend --help
 ```
 
-仓库内的 `python main.py` 仍然保留，作为兼容入口。
+`attend` 是主入口；仓库内的 `python main.py` 仍然保留，作为同一套 CLI 的兼容入口。
+
+运行时文件现在默认放到标准用户目录：
+- Linux：
+  `~/.config/always-attend/.env`、
+  `~/.local/state/always-attend/`、
+  `~/.local/share/always-attend/data/`
+- macOS：
+  `~/Library/Application Support/always-attend/config/.env`、
+  `~/Library/Application Support/always-attend/state/`、
+  `~/Library/Application Support/always-attend/data/`
+- Windows：
+  `%APPDATA%\\always-attend\\config\\.env`、
+  `%LOCALAPPDATA%\\always-attend\\state\\`、
+  `%LOCALAPPDATA%\\always-attend\\data\\`
+- 如需覆盖，可使用 `ENV_FILE`、`STORAGE_STATE`、`ATTENDANCE_STATS_FILE`、`CODES_DB_PATH` 等环境变量
+
+集成契约：
+- CLI：`attend paths --json`
+- Python：`from always_attend import get_runtime_paths_dict`
 
 ## 🧰 CLI 环境准备
 
@@ -214,7 +233,7 @@ attend
 
 运行后会发生什么：
 - 从 `.env` 和当前环境读取配置（确保设置 `PORTAL_URL`，考勤代码存放于 `data/` 或 `CODES_DB_PATH` 指定目录）。
-- 若未找到有效会话，将自动弹出浏览器进行单点登录 (SSO)，并显示 MFA 验证页面；完成验证后会将会话保存到 `storage_state.json`。
+- 若未找到有效会话，将自动弹出浏览器进行单点登录 (SSO)，并显示 MFA 验证页面；完成验证后会将会话保存到用户状态目录中的会话文件。
 - 脚本会进入考勤门户，扫描本周条目并提交代码。
 - 请在终端查看日志结果；若缺少代码（常见情况），可使用项目的 Issue 模板提交：[![Open Issue](https://img.shields.io/badge/Open-Issue-blue)](https://github.com/bunizao/always-attend/issues/new)
 - 可选参数：`--headed` 观察浏览器、`--dry-run` 仅预览不提交、`--week N` 指定周次。
@@ -250,7 +269,7 @@ git pull
 
 ## 故障排查（Troubleshooting）
 
-- 如果每次都要求 MFA：请再次执行有头登录以刷新 `storage_state.json`
+- 如果每次都要求 MFA：请再次执行有头登录以刷新本地会话文件
 - 如果浏览器无法启动：确认已安装 Chrome 或 Edge，或设置 `BROWSER_CHANNEL=chrome/msedge`
 - Windows 若激活脚本失败：以管理员身份打开 PowerShell，再运行 `.venv\Scripts\Activate.ps1`
 - 运行时请勿使用 VPN，这可能导致 Okta 拒绝连接。
@@ -281,7 +300,7 @@ login.py
 | `--browser` | string | 浏览器内核（`chromium`/`firefox`/`webkit`） | `--browser chromium` |
 | `--channel` | string | 系统浏览器通道 | `--channel chrome-beta` |
 | `--headed` | flag | 显示浏览器界面（首次登录推荐） | `--headed` |
-| `--storage-state` | string path | `storage_state.json` 保存路径 | `--storage-state storage_state.json` |
+| `--storage-state` | string path | 会话文件保存路径 | `--storage-state /tmp/storage_state.json` |
 | `--user-data-dir` | string path | 持久化浏览器用户数据目录 | `--user-data-dir ~/.always-attend-profile` |
 | `--check` | flag | 保存后再次打开门户验证登录 | `--check` |
 | `--check-only` | flag | 仅验证当前会话，不打开登录 | `--check-only` |

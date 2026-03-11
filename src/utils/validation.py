@@ -26,6 +26,8 @@ from typing import List, Dict, Optional, Tuple
 from urllib.parse import urlparse
 from pathlib import Path
 
+from always_attend.paths import env_file as default_env_file
+
 def validate_email(email: str) -> Tuple[bool, str]:
     """
     Validate email address format with detailed feedback.
@@ -216,7 +218,7 @@ def validate_credentials(username: str, password: str) -> List[str]:
     
     return messages
 
-def validate_env_file(env_path: str = '.env') -> List[str]:
+def validate_env_file(env_path: str = str(default_env_file())) -> List[str]:
     """
     Comprehensive validation of .env file.
     
