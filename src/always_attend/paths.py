@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 APP_DIR_NAME = "always-attend"
+CODES_DIR_NAME = "codes"
 
 
 def _xdg_dir(env_name: str, fallback: Path) -> Path:
@@ -154,7 +155,7 @@ def codes_db_path() -> Path:
     explicit = _path_from_env("CODES_DB_PATH", base_dir=env_file().parent)
     if explicit is not None:
         return explicit
-    return data_dir() / "data"
+    return data_dir() / CODES_DIR_NAME
 
 
 def user_data_dir() -> Path | None:

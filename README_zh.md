@@ -179,15 +179,15 @@ attend --help
 - Linux：
   `~/.config/always-attend/.env`、
   `~/.local/state/always-attend/`、
-  `~/.local/share/always-attend/data/`
+  `~/.local/share/always-attend/codes/`
 - macOS：
   `~/Library/Application Support/always-attend/config/.env`、
   `~/Library/Application Support/always-attend/state/`、
-  `~/Library/Application Support/always-attend/data/`
+  `~/Library/Application Support/always-attend/data/codes/`
 - Windows：
   `%APPDATA%\\always-attend\\config\\.env`、
   `%LOCALAPPDATA%\\always-attend\\state\\`、
-  `%LOCALAPPDATA%\\always-attend\\data\\`
+  `%LOCALAPPDATA%\\always-attend\\data\\codes\\`
 - 如需覆盖，可使用 `ENV_FILE`、`STORAGE_STATE`、`ATTENDANCE_STATS_FILE`、`CODES_DB_PATH` 等环境变量
 
 集成契约：
@@ -240,7 +240,7 @@ attend
 
 ## 📦 考勤数据库
 
-工具只会从 `data/`（或 `CODES_DB_PATH` 指定目录）加载考勤代码。目录推荐维持如下结构：
+工具只会从 `codes_db_path`（默认是应用数据目录下独立的 `codes/` 目录，或 `CODES_DB_PATH` 指定目录）加载考勤代码。目录推荐维持如下结构：
 
 ```
 data/

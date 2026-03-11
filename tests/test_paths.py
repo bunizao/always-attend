@@ -27,7 +27,7 @@ class PathDefaultsTests(unittest.TestCase):
             self.assertEqual(paths.env_file(), fake_home / ".config" / "always-attend" / ".env")
             self.assertEqual(paths.storage_state_file(), fake_home / ".local" / "state" / "always-attend" / "storage_state.json")
             self.assertEqual(paths.stats_file(), fake_home / ".local" / "state" / "always-attend" / "attendance_stats.json")
-            self.assertEqual(paths.codes_db_path(), fake_home / ".local" / "share" / "always-attend" / "data")
+            self.assertEqual(paths.codes_db_path(), fake_home / ".local" / "share" / "always-attend" / "codes")
 
     def test_windows_locations(self) -> None:
         fake_home = Path("C:/Users/TestUser")

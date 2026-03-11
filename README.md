@@ -129,15 +129,15 @@ Runtime files now default to standard user directories:
 - Linux:
   `~/.config/always-attend/.env`,
   `~/.local/state/always-attend/`,
-  `~/.local/share/always-attend/data/`
+  `~/.local/share/always-attend/codes/`
 - macOS:
   `~/Library/Application Support/always-attend/config/.env`,
   `~/Library/Application Support/always-attend/state/`,
-  `~/Library/Application Support/always-attend/data/`
+  `~/Library/Application Support/always-attend/data/codes/`
 - Windows:
   `%APPDATA%\\always-attend\\config\\.env`,
   `%LOCALAPPDATA%\\always-attend\\state\\`,
-  `%LOCALAPPDATA%\\always-attend\\data\\`
+  `%LOCALAPPDATA%\\always-attend\\data\\codes\\`
 - Override any location with env vars such as `ENV_FILE`, `STORAGE_STATE`, `ATTENDANCE_STATS_FILE`, or `CODES_DB_PATH`
 
 Integration contract:
@@ -196,7 +196,7 @@ git pull
 
 ## 📦 Attendance Database
 
-Always Attend now reads attendance codes exclusively from the `data/` directory (or the folder specified by `CODES_DB_PATH`). Each course gets its own subfolder and every week is represented by a JSON file:
+Always Attend now reads attendance codes exclusively from `codes_db_path` (by default a dedicated `codes/` directory under the app data directory, or from `CODES_DB_PATH` if overridden). Each course gets its own subfolder and every week is represented by a JSON file:
 
 ```
 data/
@@ -213,7 +213,7 @@ export CODES_DB_REPO="git@github.com:you/attendance-db.git"
 export CODES_DB_BRANCH="main"
 ```
 
-On every run the repository is cloned (if missing) or updated before submission.  Without a repository the tool simply reads whatever JSON files already exist under `data/`.
+On every run the repository is cloned into `codes_db_path` (if missing) or updated in place before submission. Without a repository the tool simply reads whatever JSON files already exist there.
 
 ## 📊 Statistics Tracking
 

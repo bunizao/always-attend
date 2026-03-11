@@ -65,13 +65,15 @@ class CliEntrypointTests(unittest.TestCase):
         result = self.run_command(sys.executable, "-m", "always_attend", "paths", "--json")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["contract_version"], "1")
+        self.assertEqual(payload["contract_version"], "2")
+        self.assertIn("app_data_dir", payload)
         self.assertIn("env_file", payload)
         self.assertIn("storage_state_file", payload)
 
     def test_paths_python_api(self) -> None:
         payload = get_runtime_paths_dict()
-        self.assertEqual(payload["contract_version"], "1")
+        self.assertEqual(payload["contract_version"], "2")
+        self.assertIn("app_data_dir", payload)
         self.assertIn("codes_db_path", payload)
 
 

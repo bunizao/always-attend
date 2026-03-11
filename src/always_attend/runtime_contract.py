@@ -24,7 +24,7 @@ from always_attend.paths import (
 from utils.env_utils import load_env
 
 
-RUNTIME_CONTRACT_VERSION = "1"
+RUNTIME_CONTRACT_VERSION = "2"
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,7 @@ class RuntimePaths:
     platform: str
     config_dir: str
     state_dir: str
+    app_data_dir: str
     data_dir: str
     env_file: str
     setup_sentinel_file: str
@@ -60,6 +61,7 @@ def get_runtime_paths() -> RuntimePaths:
         platform=sys.platform,
         config_dir=str(config_dir()),
         state_dir=str(state_dir()),
+        app_data_dir=str(data_dir()),
         data_dir=str(data_dir()),
         env_file=str(env_file()),
         setup_sentinel_file=str(setup_sentinel_file()),
