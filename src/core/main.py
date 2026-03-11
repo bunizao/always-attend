@@ -28,8 +28,8 @@ import threading
 from pathlib import Path
 from typing import Optional, Dict
 
-from pathlib import Path
-
+from always_attend import __version__
+from always_attend.argv import CLI_EXAMPLES, normalize_cli_argv
 from utils.env_utils import load_env, ensure_env_file, append_to_env_file
 from utils.logger import logger, step, success, set_log_profile
 from utils.session import is_storage_state_effective
@@ -271,14 +271,17 @@ async def _run_submit(dry_run: bool, target_email: Optional[str] = None) -> None
     await submit.run_submit(dry_run=dry_run, target_email=target_email)
 
 
-def main():
+def main(argv: Optional[list[str]] = None):
     load_env(os.getenv('ENV_FILE', '.env'))
     codes_root = Path(os.getenv('CODES_DB_PATH', 'data')).expanduser().resolve()
     logger.debug("Using codes directory: %s", codes_root)
 
     parser = argparse.ArgumentParser(
-        description="Always-attend: auto login + submit with storage_state check"
+        description="Always-attend: auto login + submit with storage_state check",
+        epilog=CLI_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"always-attend {__version__}")
     parser.add_argument("--browser", choices=["chromium", "firefox", "webkit"], help="Browser engine override")
     parser.add_argument("--channel", help="Use system browser channel (chromium only): chrome|chrome-beta|msedge|msedge-beta")
     parser.add_argument("--headed", action="store_true", help="Run with browser UI (sets HEADLESS=0)")
@@ -290,7 +293,8 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--verbose", action="store_true", help="Enable high-detail logging (same as debug)")
     parser.add_argument("--skip-update", action="store_true", help="Skip remote update check")
-    args = parser.parse_args()
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(normalize_cli_argv(raw_args))
 
     if args.skip_update:
         os.environ['SKIP_UPDATE_CHECK'] = '1'

@@ -1,22 +1,6 @@
 #!/usr/bin/env python3
-"""
- █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
-██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
-███████║██║     ██║ █╗ ██║███████║ ╚████╔╝ ███████╗
-██╔══██║██║     ██║███╗██║██╔══██║  ╚██╔╝  ╚════██║
-██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
-╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
+"""Backward-compatible launcher for the packaged CLI."""
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
-██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
-███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
-██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
-██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
-main.py
-Entry point that bootstraps Always Attend.
-"""
-import os
 import sys
 from pathlib import Path
 
@@ -25,26 +9,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from utils.bootstrap import BootstrapError, ensure_runtime_ready  # noqa: E402
+from always_attend.cli import main  # noqa: E402
 
-def _print_bootstrap_error(error: BootstrapError) -> None:
-    msg = (
-        "[Bootstrap] {}\n"
-        "Tip: run 'uv sync' followed by 'uv run python -m playwright install chromium'.\n"
-        "      Alternatively, create a venv with 'python3 -m venv .venv && source .venv/bin/activate',\n"
-        "      then run 'pip install -r requirements.txt' and 'python -m playwright install chromium'."
-    ).format(error)
-    print(msg, file=sys.stderr)
-
-def run() -> None:
-    try:
-        ensure_runtime_ready(PROJECT_ROOT)
-    except BootstrapError as exc:
-        _print_bootstrap_error(exc)
-        sys.exit(1)
-
-    from core.main import main as core_main  # noqa: E402
-    core_main()
 
 if __name__ == "__main__":
-    run()
+    main()

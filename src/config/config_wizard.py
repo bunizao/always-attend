@@ -70,9 +70,9 @@ class ConfigWizard:
             
         print("\n" + "🎉 Setup Complete!".center(60, "="))
         print("\nYou can now run the attendance automation:")
-        print("  python main.py")
+        print("  attend")
         print("\nOr test with dry run:")
-        print("  python main.py --dry-run")
+        print("  attend --dry-run")
         
         self.mark_setup_complete()
         return True

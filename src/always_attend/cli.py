@@ -1,0 +1,57 @@
+"""Public CLI entrypoint for Always Attend."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from always_attend.argv import normalize_cli_argv
+from utils.bootstrap import BootstrapError, ensure_runtime_ready
+
+
+def _is_non_runtime_command(argv: list[str]) -> bool:
+    return any(arg in {"-h", "--help", "--version"} for arg in argv)
+
+
+def _find_project_root() -> Path | None:
+    package_dir = Path(__file__).resolve().parent
+    for candidate in (package_dir.parent.parent, Path.cwd()):
+        if (
+            (candidate / "pyproject.toml").exists()
+            and (candidate / "requirements.txt").exists()
+            and (candidate / "src").is_dir()
+        ):
+            return candidate
+    return None
+
+
+def _print_bootstrap_error(error: BootstrapError) -> None:
+    msg = (
+        "[Bootstrap] {}\n"
+        "Tip: run 'uv sync' followed by 'uv run python -m playwright install chromium'.\n"
+        "      Alternatively, create a venv with 'python3 -m venv .venv && source .venv/bin/activate',\n"
+        "      then run 'pip install -r requirements.txt' and 'python -m playwright install chromium'."
+    ).format(error)
+    print(msg, file=sys.stderr)
+
+
+def main() -> None:
+    normalized_argv = normalize_cli_argv(sys.argv[1:])
+
+    if _is_non_runtime_command(normalized_argv):
+        from core.main import main as core_main
+
+        core_main(normalized_argv)
+        return
+
+    project_root = _find_project_root()
+    if project_root is not None:
+        try:
+            ensure_runtime_ready(project_root)
+        except BootstrapError as exc:
+            _print_bootstrap_error(exc)
+            raise SystemExit(1) from exc
+
+    from core.main import main as core_main
+
+    core_main(normalized_argv)
