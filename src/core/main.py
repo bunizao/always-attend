@@ -262,6 +262,7 @@ async def _ensure_session(headed_default: bool) -> None:
             storage_state=storage_state,
             user_data_dir=user_data_dir,
             auto_login_enabled=os.getenv('AUTO_LOGIN', '1') in ('1', 'true', 'True'),
+            import_browser_session=os.getenv('IMPORT_BROWSER_SESSION', '1') in ('1', 'true', 'True'),
         )
     else:
         if os.getenv('SKIP_SESSION_CHECK') in ('1','true','True'):
@@ -291,6 +292,7 @@ def main(argv: Optional[list[str]] = None):
     parser.add_argument("--dry-run", action="store_true", help="Print parsed codes and exit (no browser)")
     parser.add_argument("--week", help="Week number to submit (sets WEEK_NUMBER)")
     parser.add_argument("--login-only", action="store_true", help="Only perform login/session refresh and exit")
+    parser.add_argument("--import-browser-session", action="store_true", help="Import an existing login session from the detected system browser profile (enabled by default)")
     parser.add_argument("--stats", action="store_true", help="Show attendance statistics and exit")
     parser.add_argument("--setup", action="store_true", help="Run configuration wizard")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -343,6 +345,8 @@ def main(argv: Optional[list[str]] = None):
         os.environ['HEADLESS'] = '0'
     if args.week:
         os.environ['WEEK_NUMBER'] = str(args.week)
+    if args.import_browser_session:
+        os.environ['IMPORT_BROWSER_SESSION'] = '1'
     if args.debug or args.verbose:
         profile = "verbose" if args.verbose and not args.debug else "debug"
         set_log_profile(profile)

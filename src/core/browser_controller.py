@@ -41,6 +41,7 @@ class BrowserConfig:
     storage_state: Optional[str] = None
     user_data_dir: Optional[str] = None
     timeout_ms: int = 60000
+    launch_args: Optional[list[str]] = None
 
 
 class BrowserLaunchError(RuntimeError):
@@ -106,18 +107,23 @@ class BrowserController:
 
     async def _launch_persistent(self, browser_type, launch_headless: bool) -> None:
         channel = self._config.channel if self._config.name == "chromium" else None
+        launch_kwargs = {
+            "headless": launch_headless,
+            "channel": channel,
+            "args": self._config.launch_args,
+        }
         try:
             self._context = await browser_type.launch_persistent_context(
                 self._config.user_data_dir,
-                headless=launch_headless,
-                channel=channel,
+                **launch_kwargs,
             )
         except Exception as exc:
             if channel:
                 logger.warning(f"Failed to launch persistent browser with channel '{channel}': {exc}")
+                launch_kwargs["channel"] = None
                 self._context = await browser_type.launch_persistent_context(
                     self._config.user_data_dir,
-                    headless=launch_headless,
+                    **launch_kwargs,
                 )
             else:
                 raise

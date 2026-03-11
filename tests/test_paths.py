@@ -109,6 +109,9 @@ class PathDefaultsTests(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True), patch("always_attend.paths.Path.cwd", return_value=root):
                 self.assertEqual(paths.env_file(), root / ".env")
 
+    def test_default_env_template_enables_browser_session_import(self) -> None:
+        self.assertIn('IMPORT_BROWSER_SESSION="1"', paths.default_env_template())
+
 
 if __name__ == "__main__":
     unittest.main()

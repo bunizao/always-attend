@@ -19,6 +19,7 @@ Login and session management routines for Always Attend.
 import os
 import argparse
 import asyncio
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -27,6 +28,7 @@ from playwright.async_api import Page
 from always_attend.paths import ensure_parent, env_file as default_env_file, storage_state_file, user_data_dir as default_user_data_dir
 from utils.logger import apply_env_configuration, logger, debug_detail
 from utils.env_utils import load_env
+from utils.browser_session import clone_browser_session_source, resolve_browser_session_source
 from utils.session import is_storage_state_effective
 from utils.playwright_helpers import fill_first_match, click_first_match, maybe_switch_to_code_factor
 from utils.totp import gen_totp
@@ -51,6 +53,7 @@ class LoginConfig:
     storage_state: str = str(storage_state_file())
     user_data_dir: Optional[str] = None
     auto_login_enabled: bool = True
+    import_browser_session: bool = False
     timeout_ms: int = 60000
     login_check_timeout_ms: int = 60000
 
@@ -388,6 +391,10 @@ class LoginWorkflow:
 
     async def run(self) -> None:
         """Launch browser and ensure session is stored."""
+        if self.config.import_browser_session and not self.config.user_data_dir:
+            if await self._import_session_from_system_browser():
+                return
+
         async with BrowserController(self._browser_config()) as controller:
             page = await controller.context.new_page()
             await page.goto(self.config.portal_url, timeout=self.config.timeout_ms)
@@ -444,6 +451,49 @@ class LoginWorkflow:
                 return False
             return await self._is_session_active(page)
 
+    async def _import_session_from_system_browser(self) -> bool:
+        source = resolve_browser_session_source(self.config.channel)
+        if source is None:
+            logger.info("Browser session import skipped: no compatible system browser profile was found.")
+            return False
+
+        logger.info(
+            "Trying to import session from %s profile '%s'.",
+            source.channel,
+            source.profile_name,
+        )
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="always-attend-browser-session-") as temp_dir:
+                temp_root = clone_browser_session_source(source, Path(temp_dir))
+                cfg = BrowserConfig(
+                    name="chromium",
+                    channel=source.channel,
+                    headed=False,
+                    user_data_dir=str(temp_root),
+                    timeout_ms=self.config.login_check_timeout_ms,
+                    launch_args=[f"--profile-directory={source.profile_name}"],
+                )
+                async with BrowserController(cfg) as controller:
+                    page = await controller.context.new_page()
+                    await page.goto(self.config.portal_url, timeout=self.config.login_check_timeout_ms)
+                    if not await self._is_session_active(page):
+                        logger.info("No active portal session was found in the imported browser profile.")
+                        return False
+
+                    ensure_parent(Path(self.config.storage_state))
+                    await controller.context.storage_state(path=self.config.storage_state)
+        except Exception as exc:
+            logger.warning(f"Browser session import failed: {exc}")
+            return False
+
+        if not is_storage_state_effective(self.config.storage_state):
+            logger.warning("Browser session import produced an empty storage state.")
+            return False
+
+        logger.info(f"✅ Imported browser session to {self.config.storage_state}")
+        return True
+
     async def _persist_session(self, controller: BrowserController, auto_success: bool) -> None:
         if self.config.user_data_dir:
             return
@@ -493,7 +543,8 @@ async def run_login(portal_url: str,
                     headed: bool = True,
                     storage_state: str = str(storage_state_file()),
                     user_data_dir: str | None = None,
-                    auto_login_enabled: bool = True) -> None:
+                    auto_login_enabled: bool = True,
+                    import_browser_session: bool = False) -> None:
     config = LoginConfig(
         portal_url=portal_url,
         browser_name=browser_name,
@@ -502,6 +553,7 @@ async def run_login(portal_url: str,
         storage_state=storage_state,
         user_data_dir=user_data_dir,
         auto_login_enabled=auto_login_enabled,
+        import_browser_session=import_browser_session,
     )
     workflow = LoginWorkflow(config)
     await workflow.run()
@@ -542,6 +594,7 @@ def main():
     parser.add_argument("--storage-state", default=str(storage_state_file()), help="Path to save the session state file")
     default_profile_dir = default_user_data_dir()
     parser.add_argument("--user-data-dir", default=(str(default_profile_dir) if default_profile_dir is not None else None), help="Persistent profile directory (optional)")
+    parser.add_argument("--import-browser-session", action="store_true", help="Import an existing login session from the detected system browser profile (enabled by default)")
     parser.add_argument("--check", action="store_true", help="After saving session, verify login by opening the portal again")
     parser.add_argument("--check-only", action="store_true", help="Do not open login; only verify current session state")
     args = parser.parse_args()
@@ -589,6 +642,7 @@ def main():
         headed=headed,
         storage_state=args.storage_state,
         user_data_dir=args.user_data_dir,
+        import_browser_session=args.import_browser_session or os.getenv("IMPORT_BROWSER_SESSION", "1") in ("1", "true", "True"),
     ))
 
     if args.check:
