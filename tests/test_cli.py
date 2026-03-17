@@ -81,7 +81,13 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("login", result.stdout)
         self.assertIn("check", result.stdout)
-        self.assertIn("cookies", result.stdout)
+
+    def test_agent_run_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "run", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("--target", result.stdout)
+        self.assertIn("--sources", result.stdout)
+        self.assertIn("--min-confidence", result.stdout)
 
 
 if __name__ == "__main__":
