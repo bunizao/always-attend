@@ -125,6 +125,22 @@ def _extract_cookie_items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def extract_cookie_items(payload: Any) -> list[dict[str, Any]]:
+    """Return normalized cookie items from an Okta CLI payload."""
+    return _extract_cookie_items(payload)
+
+
+def build_cookie_header(payload: Any) -> str:
+    """Serialize cookie payloads into a Cookie request header."""
+    parts = []
+    for item in _extract_cookie_items(payload):
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        parts.append(f"{name}={item.get('value', '')}")
+    return "; ".join(parts)
+
+
 def _normalize_cookie(cookie: dict[str, Any], host: str, secure_default: bool) -> dict[str, Any]:
     normalized = {
         "name": str(cookie.get("name", "")).strip(),

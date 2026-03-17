@@ -77,16 +77,36 @@ uv tool update-shell
 
 - Python 3.11 或更高版本
 - 已安装 Google Chrome 或 Microsoft Edge 浏览器
+- 若使用 agents-first 工作流，还需要安装 `okta`，以及你要接入的 `moodle-cli`、`edstem`、`gogcli`
 
-## 安装与首次运行
+## Agents-First 工作流
 
-先用上面的 `uv tool` 或 `pipx` 完成安装，再运行：
+`attend` 现在是统一的 agent 入口。推荐执行模型如下：
+
+1. `attend auth ...` 调用外部 `okta` CLI 完成登录与会话检查。
+2. `attend fetch ...` 调用 `moodle-cli`、`edstem` 或 `gogcli`，并通过环境变量传递共享的 Okta cookies。
+3. `attend resolve ...` 校验并归一化 agent 生成的提交计划 JSON。
+4. `attend submit ...` 将计划物化到本地 codes 目录，并复用 Playwright 提交流程完成最终提交。
 
 ```bash
-attend
-
 # 查看可集成的运行时路径
 attend paths --json
+
+# 登录或刷新共享 Okta 会话
+attend auth login https://attendance.example.edu --json
+
+# 检查共享会话是否有效
+attend auth check https://attendance.example.edu --json
+
+# 拉取外部数据源
+attend fetch --source edstem --json
+attend fetch --source edstem --course FIT2099 --kind threads --json
+
+# 校验提交计划
+attend resolve --plan plan.json --json
+
+# 提交归一化后的计划
+attend submit --plan plan.json --portal-url https://attendance.example.edu --json
 ```
 
 安装完成后，可在用户配置目录中设置 `.env`。Monash University Malaysia 用户请将 `PORTAL_URL` 设为 `https://attendance.monash.edu.my`，并保留 `https://` 前缀。
@@ -150,12 +170,14 @@ attend --dry-run
 pipx upgrade always-attend
 ```
 
-运行后会发生什么：
-- 从 `.env` 和当前环境读取配置（确保设置 `PORTAL_URL`，考勤代码存放于 `data/` 或 `CODES_DB_PATH` 指定目录）。
-- 若未找到有效会话，将自动弹出浏览器进行单点登录 (SSO)，并显示 MFA 验证页面；完成验证后会将会话保存到用户状态目录中的会话文件。
-- 脚本会进入考勤门户，扫描本周条目并提交代码。
-- 请在终端查看日志结果；若缺少代码（常见情况），可使用项目的 Issue 模板提交：[![Open Issue](https://img.shields.io/badge/Open-Issue-blue)](https://github.com/bunizao/always-attend/issues/new)
-- 可选参数：`--headed` 观察浏览器、`--dry-run` 仅预览不提交、`--week N` 指定周次。
+共享会话会通过以下环境变量下发给子 CLI：
+- `ALWAYS_ATTEND_OKTA_URL`
+- `ALWAYS_ATTEND_OKTA_COOKIES_JSON`
+- `ALWAYS_ATTEND_OKTA_COOKIE_HEADER`
+- `OKTA_COOKIES_JSON`
+- `OKTA_COOKIE_HEADER`
+
+建议下游 CLI 消费这些值，而不是再次弹出交互式登录。
 
 ## 📦 考勤数据库
 

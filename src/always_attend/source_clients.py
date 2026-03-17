@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
+
+from always_attend.okta_client import OktaCliError, OktaClient, build_cookie_header, extract_cookie_items
 
 
 class SourceCommandError(RuntimeError):
@@ -23,6 +26,7 @@ class SourceRequest:
     course: str | None = None
     week: int | None = None
     limit: int | None = None
+    url: str | None = None
     exec_args: list[str] = field(default_factory=list)
 
 
@@ -34,8 +38,8 @@ def _find_executable(candidates: tuple[str, ...]) -> str:
     raise SourceCommandError(f"Executable not found. Tried: {', '.join(candidates)}")
 
 
-def _run_json_command(command: list[str]) -> Any:
-    result = subprocess.run(command, capture_output=True, text=True)
+def _run_json_command(command: list[str], *, env: dict[str, str] | None = None) -> Any:
+    result = subprocess.run(command, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         message = (result.stderr or result.stdout or "source command failed").strip()
         raise SourceCommandError(message)
@@ -57,6 +61,31 @@ def _extract_course_code(value: str) -> str | None:
     return None
 
 
+def _build_source_env(request: SourceRequest) -> dict[str, str]:
+    env = os.environ.copy()
+    session_url = (request.url or os.getenv("SOURCE_OKTA_URL") or os.getenv("PORTAL_URL", "")).strip()
+    if not session_url:
+        return env
+
+    try:
+        cookies_payload = OktaClient().cookies(url=session_url).payload
+    except OktaCliError:
+        return env
+
+    cookie_items = extract_cookie_items(cookies_payload)
+    if not cookie_items:
+        return env
+
+    env["ALWAYS_ATTEND_OKTA_URL"] = session_url
+    env["ALWAYS_ATTEND_OKTA_COOKIES_JSON"] = json.dumps(cookie_items)
+    env["OKTA_COOKIES_JSON"] = env["ALWAYS_ATTEND_OKTA_COOKIES_JSON"]
+    cookie_header = build_cookie_header(cookies_payload)
+    if cookie_header:
+        env["ALWAYS_ATTEND_OKTA_COOKIE_HEADER"] = cookie_header
+        env["OKTA_COOKIE_HEADER"] = cookie_header
+    return env
+
+
 class EdstemAdapter:
     """Typed adapter for the installed `edstem` CLI."""
 
@@ -65,18 +94,20 @@ class EdstemAdapter:
     def fetch(self, request: SourceRequest) -> dict[str, Any]:
         executable = _find_executable(self.executable_names)
         kind = request.kind.lower()
+        source_env = _build_source_env(request)
 
         if kind in {"auto", "courses"} and not request.course:
             command = [executable, "courses", "--json"]
-            payload = _run_json_command(command)
+            payload = _run_json_command(command, env=source_env)
             return {
                 "source": "edstem",
                 "kind": "courses",
                 "command": command,
                 "payload": payload,
+                "session_env": _session_env_summary(source_env),
             }
 
-        course_payload = _run_json_command([executable, "courses", "--json"])
+        course_payload = _run_json_command([executable, "courses", "--json"], env=source_env)
         course_id = self._match_course_id(course_payload, request.course)
         if course_id is None:
             raise SourceCommandError(f"Unable to find Edstem course for '{request.course}'.")
@@ -89,7 +120,7 @@ class EdstemAdapter:
                 command.extend(["--max", str(request.limit)])
         command.extend(request.exec_args)
 
-        payload = _run_json_command(command)
+        payload = _run_json_command(command, env=source_env)
         return {
             "source": "edstem",
             "kind": "lessons" if kind == "lessons" else "threads",
@@ -97,6 +128,7 @@ class EdstemAdapter:
             "resolved_course_id": course_id,
             "command": command,
             "payload": payload,
+            "session_env": _session_env_summary(source_env),
         }
 
     @staticmethod
@@ -126,6 +158,7 @@ class GenericJsonCliAdapter:
 
     def fetch(self, request: SourceRequest) -> dict[str, Any]:
         executable = _find_executable(self.executable_names)
+        source_env = _build_source_env(request)
         command = [executable]
         if request.kind not in {"", "auto"}:
             command.append(request.kind)
@@ -133,13 +166,22 @@ class GenericJsonCliAdapter:
             command.extend(request.exec_args)
         else:
             command.append("--json")
-        payload = _run_json_command(command)
+        payload = _run_json_command(command, env=source_env)
         return {
             "source": self.source,
             "kind": request.kind,
             "command": command,
             "payload": payload,
+            "session_env": _session_env_summary(source_env),
         }
+
+
+def _session_env_summary(env: dict[str, str]) -> dict[str, Any]:
+    return {
+        "okta_url": env.get("ALWAYS_ATTEND_OKTA_URL"),
+        "cookie_header_present": bool(env.get("ALWAYS_ATTEND_OKTA_COOKIE_HEADER")),
+        "cookies_json_present": bool(env.get("ALWAYS_ATTEND_OKTA_COOKIES_JSON")),
+    }
 
 
 def fetch_from_source(request: SourceRequest) -> dict[str, Any]:

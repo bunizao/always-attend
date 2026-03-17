@@ -77,56 +77,51 @@ Public command:
 
 - `attend`
 
-## 📋 Application Workflow
+## 🤖 Agents-First Workflow
 
-The application follows a structured 4-step workflow with multiple execution modes:
+`attend` is now the single agent-facing entrypoint. The intended execution model is:
 
-### Core Workflow
-1. **Environment Setup** - Bootstrap and install dependencies
-2. **Python Check** - Verify Python environment and packages
-3. **App Start** - Load config, privacy policy, and first-run setup
-4. **Choose Mode** - Select execution mode:
-
-### Execution Modes
-- **🔍 Stats** (`--stats`) - View attendance statistics (read-only)
-- **📤 Submit** (default) - Main workflow for code submission
-- **🔑 Login Only** (`--login-only`) - Refresh session and exit
-
-### Submit Workflow Path
-When using Submit mode, the application follows this sequence:
-1. Session Check → Sign-in if needed
-2. Submission → Dry-run or submit codes
-3. Done → Save results and exit
-
-### Login Only Workflow Path
-When using Login Only mode:
-1. Session Check → Sign-in if needed
-2. Done → Exit after refreshing session
+1. `attend auth ...` delegates Okta login and session checks to the external `okta` CLI.
+2. `attend fetch ...` calls `moodle-cli`, `edstem`, or `gogcli` and passes shared Okta cookie context through environment variables.
+3. `attend resolve ...` normalizes an agent-authored submission plan into a stable JSON shape.
+4. `attend submit ...` materializes the resolved plan into the local codes store and reuses the Playwright submitter for the final portal submission.
 
 ### Quick Start
+
 ```bash
-# Basic execution
-attend
-
-# View statistics
-attend stats
-
-# Refresh login session
-attend login
-
-# Inspect resolved runtime paths for integrations
+# Inspect runtime locations for integrations
 attend paths --json
 
-# Run specific week
-attend week 4
+# Refresh or create the shared Okta session
+attend auth login https://attendance.example.edu --json
 
-# Show browser (headed mode)
-attend --headed
+# Check whether the shared session is still valid
+attend auth check https://attendance.example.edu --json
+
+# Fetch source data
+attend fetch --source edstem --json
+attend fetch --source edstem --course FIT2099 --kind threads --json
+
+# Validate a submission plan
+attend resolve --plan plan.json --json
+
+# Submit a validated plan
+attend submit --plan plan.json --portal-url https://attendance.example.edu --json
 ```
 
-Install with `uv tool` or `pipx`, then run `attend --help`.
+### Shared Session Contract
 
-Runtime files now default to standard user directories:
+When `attend fetch` runs, it exports the shared Okta session to child CLIs using these environment variables:
+
+- `ALWAYS_ATTEND_OKTA_URL`
+- `ALWAYS_ATTEND_OKTA_COOKIES_JSON`
+- `ALWAYS_ATTEND_OKTA_COOKIE_HEADER`
+- `OKTA_COOKIES_JSON`
+- `OKTA_COOKIE_HEADER`
+
+Adapters should consume these values instead of implementing their own interactive login flow.
+
+Runtime files default to standard user directories:
 - Linux:
   `~/.config/always-attend/.env`,
   `~/.local/state/always-attend/`,
@@ -144,44 +139,6 @@ Runtime files now default to standard user directories:
 Integration contract:
 - CLI: `attend paths --json`
 - Python: `from always_attend import get_runtime_paths_dict`
-
-## 🧰 CLI Installation Details
-
-### Option A — `uv tool` (recommended)
-- Fastest setup for a standalone CLI install.
-- Keeps the command isolated from your project environments.
-- Use this when you want `attend` available globally for your user.
-
-```bash
-uv tool install --with-executables-from playwright always-attend
-attend --dry-run
-```
-
-If Chromium is needed and not installed yet, the app will download it automatically.
-
-Upgrade later:
-
-```bash
-uv tool upgrade always-attend
-```
-
-### Option B — `pipx`
-- Good fit if you already manage Python CLIs with `pipx`.
-- Keeps `always-attend` isolated in its own application environment.
-
-```bash
-pipx install always-attend
-pipx inject --include-apps always-attend playwright
-attend --dry-run
-```
-
-Upgrade later:
-
-```bash
-pipx upgrade always-attend
-```
-
----
 
 ## 📦 Attendance Database
 
@@ -221,34 +178,6 @@ Statistics include:
 - Codes submitted per course
 - Recent activity timeline
 - Error history
-
-## ✨ Rich CLI Experience
-
-Always Attend ships with a polished terminal UI powered by [Rich](https://github.com/Textualize/rich):
-
-- Animated Monash-blue typewriter banner with optional spark highlights (auto-disables on non-TTY output).
-- Live, single-line progress bars with square block fills and cached ASCII spinners when `CLI_PROGRESS_RICH=1`.
-- Animated logging for major workflow steps without leaking ANSI fragments when launched via `.command`/`.bat`.
-
-### UI Control Flags
-
-| Variable | Values | Effect |
-| --- | --- | --- |
-| `CLI_STYLE` | `fancy` (default), `simple`, `minimal` | Toggle banner + log animations |
-| `FORCE_ANIMATIONS` | `true` / `false` | Override TTY detection (useful for debugging) |
-| `CLI_PROGRESS_RICH` | `1` / `0` | Enable/disable Rich live progress tracker |
-
-### Examples
-
-```bash
-# Full experience: animated banner, live block progress
-CLI_STYLE=fancy CLI_PROGRESS_RICH=1 attend --dry-run
-
-# Quiet fallback suitable for basic terminals
-CLI_STYLE=minimal CLI_PROGRESS_RICH=0 attend
-```
-
-Set these in your `.env` to persist the chosen style across runs.
 
 ## Troubleshooting
 

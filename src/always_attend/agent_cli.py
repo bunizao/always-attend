@@ -56,6 +56,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument("--course")
     fetch_parser.add_argument("--week", type=int)
     fetch_parser.add_argument("--limit", type=int)
+    fetch_parser.add_argument("--url")
     fetch_parser.add_argument("--exec-arg", action="append", default=[])
     fetch_parser.add_argument("--json", action="store_true")
 
@@ -140,6 +141,7 @@ def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
             course=args.course,
             week=args.week,
             limit=args.limit,
+            url=args.url,
             exec_args=list(args.exec_arg or []),
         )
     )
