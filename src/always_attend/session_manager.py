@@ -27,13 +27,15 @@ class DependencyStatus:
     name: str
     status: str
     details: str
+    install_hint: str | None = None
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, str | None]:
         """Return a JSON-friendly dependency status."""
         return {
             "name": self.name,
             "status": self.status,
             "details": self.details,
+            "install_hint": self.install_hint,
         }
 
 
@@ -124,12 +126,33 @@ class SessionManager:
             resolved = shutil.which(command)
             if resolved:
                 return DependencyStatus(name=name, status="ok", details=resolved)
-        return DependencyStatus(name=name, status="missing", details=f"Tried: {', '.join(commands)}")
+        return DependencyStatus(
+            name=name,
+            status="missing",
+            details=f"Tried: {', '.join(commands)}",
+            install_hint=_install_hint_for(name),
+        )
 
     @staticmethod
     def _python_module_status(name: str, module_name: str) -> DependencyStatus:
         spec = importlib.util.find_spec(module_name)
         if spec is None:
-            return DependencyStatus(name=name, status="missing", details=f"Python module '{module_name}' not found")
+            return DependencyStatus(
+                name=name,
+                status="missing",
+                details=f"Python module '{module_name}' not found",
+                install_hint=_install_hint_for(name),
+            )
         origin = spec.origin or "namespace"
         return DependencyStatus(name=name, status="ok", details=origin)
+
+
+def _install_hint_for(name: str) -> str | None:
+    hints = {
+        "okta": "uv tool install okta-auth-cli",
+        "moodle-cli": "uv tool install moodle-cli",
+        "edstem": "uv tool install edstem-cli",
+        "gogcli": "Install the required GOG CLI plugin or add it to PATH before rerunning attend.",
+        "pyyaml": "python -m pip install PyYAML",
+    }
+    return hints.get(name)

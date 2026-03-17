@@ -30,6 +30,16 @@ If `okta`, `playwright`, `moodle`, or `edstem` are missing, stop and report that
 
 Do not block on OCR. Image links are meant for the model to inspect directly.
 
+When a required CLI is missing, install it before continuing:
+
+```bash
+uv tool install okta-auth-cli
+uv tool install moodle-cli
+uv tool install edstem-cli
+```
+
+If `doctor --json` returns an `install_hint`, prefer that exact command.
+
 ### 2. Build the handoff package
 
 Run:
@@ -47,6 +57,7 @@ The handoff payload contains:
   - `text_snippets`
   - `course_codes`
 - `trace`: structured collection events
+- `plan_contract`: the exact JSON shape the model should write before submission
 
 Treat `open_items` as the source of truth.
 Treat `artifacts` as evidence.
@@ -81,6 +92,7 @@ Rules:
 - Only include items you believe are strong enough to submit
 - If evidence is ambiguous, leave the item out and report it as unresolved
 - Keep slot labels aligned with the attendance-site item, not the source wording
+- Use `plan_contract` from the handoff payload as the authoritative schema when it is present
 
 ### 5. Submit or dry run
 

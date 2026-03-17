@@ -86,7 +86,17 @@ class AgentCliTests(unittest.TestCase):
     def test_doctor_command_reports_status(self) -> None:
         with patch(
             "always_attend.agent_cli.SessionManager.doctor_payload",
-            return_value={"checks": [{"name": "okta", "status": "ok", "details": "/usr/bin/okta"}], "ready": True},
+            return_value={
+                "checks": [
+                    {
+                        "name": "okta",
+                        "status": "ok",
+                        "details": "/usr/bin/okta",
+                        "install_hint": None,
+                    }
+                ],
+                "ready": True,
+            },
         ):
             exit_code, payload = self.run_agent_command(["doctor", "--json"])
 
@@ -145,6 +155,7 @@ class AgentCliTests(unittest.TestCase):
                 "open_items": [{"course_code": "FIT2099"}],
                 "candidate_hints": [],
                 "artifacts": [{"source": "edstem", "image_urls": ["https://example.test/code.png"]}],
+                "plan_contract": {"required_fields": ["course_code", "week", "slot", "code"]},
                 "trace": [],
             },
             "exit_code": 0,
@@ -156,6 +167,7 @@ class AgentCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["data"]["artifacts"][0]["source"], "edstem")
+        self.assertIn("code", payload["data"]["plan_contract"]["required_fields"])
 
     def test_build_playwright_storage_state_accepts_cookie_header(self) -> None:
         payload = build_playwright_storage_state(

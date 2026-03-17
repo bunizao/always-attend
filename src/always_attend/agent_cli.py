@@ -374,6 +374,17 @@ async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
             "open_items": open_items,
             "candidate_hints": [item.to_dict() for item in candidates],
             "artifacts": [item.to_dict() for item in artifacts],
+            "plan_contract": {
+                "required_fields": ["course_code", "week", "slot", "code"],
+                "shape": [
+                    {
+                        "course_code": "FIT2099",
+                        "week": 7,
+                        "slot": "Workshop 01",
+                        "code": "ABCDE",
+                    }
+                ],
+            },
             "instructions": [
                 "Treat open_items from the attendance site as the source of truth.",
                 "Use text snippets and image_urls from artifacts as evidence for multimodal analysis.",
