@@ -94,6 +94,7 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("--sources", result.stdout)
         self.assertIn("--week", result.stdout)
+        self.assertIn("--demo", result.stdout)
 
 
 if __name__ == "__main__":

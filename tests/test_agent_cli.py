@@ -132,6 +132,63 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 5)
         self.assertEqual(payload["metrics"]["unresolved_count"], 1)
 
+    def test_run_demo_returns_report_without_target(self) -> None:
+        exit_code, payload = self.run_agent_command(["run", "--demo", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "run")
+        self.assertIn("summary", payload)
+        self.assertEqual(payload["data"]["items"][0]["course_code"], "FIT2099")
+
+    def test_run_dry_run_without_target_falls_back_to_demo(self) -> None:
+        exit_code, payload = self.run_agent_command(["run", "--dry-run", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "run")
+        self.assertIn("Demo", payload["message"])
+
+    def test_run_without_target_falls_back_to_demo(self) -> None:
+        exit_code, payload = self.run_agent_command(["run", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "run")
+        self.assertIn("Demo", payload["message"])
+
+    def test_inspect_demo_returns_items_without_target(self) -> None:
+        exit_code, payload = self.run_agent_command(["inspect", "state", "--demo", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "inspect.state")
+        self.assertEqual(payload["data"]["items"][0]["course_code"], "FIT2099")
+
+    def test_inspect_without_target_falls_back_to_demo(self) -> None:
+        exit_code, payload = self.run_agent_command(["inspect", "state", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "inspect.state")
+        self.assertIn("Demo", payload["message"])
+
+    def test_match_demo_returns_matches_without_target(self) -> None:
+        exit_code, payload = self.run_agent_command(["match", "--demo", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "match")
+        self.assertEqual(payload["data"]["matches"][0]["course_code"], "FIT2099")
+
+    def test_submit_demo_returns_report_without_target(self) -> None:
+        exit_code, payload = self.run_agent_command(["submit", "--demo", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "submit")
+        self.assertIn("attempts", payload["data"])
+
+    def test_report_demo_returns_summary_without_target(self) -> None:
+        exit_code, payload = self.run_agent_command(["report", "--demo", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "report")
+        self.assertIn("summary", payload)
+
     def test_fetch_command_returns_candidates(self) -> None:
         async_payload = {
             "status": "ok",
@@ -168,6 +225,28 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["data"]["artifacts"][0]["source"], "edstem")
         self.assertIn("code", payload["data"]["plan_contract"]["required_fields"])
+
+    def test_handoff_demo_returns_schema_without_session(self) -> None:
+        exit_code, payload = self.run_agent_command(["handoff", "--demo", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "handoff")
+        self.assertIn("plan_contract", payload["data"])
+        self.assertEqual(payload["data"]["open_items"][0]["course_code"], "FIT2099")
+
+    def test_handoff_missing_session_returns_next_action(self) -> None:
+        with patch(
+            "always_attend.agent_cli._inspect_state",
+            new=AsyncMock(side_effect=RuntimeError("No stored session found for this URL")),
+        ):
+            exit_code, payload = self.run_agent_command(
+                ["handoff", "--target", "https://attendance.example.test/student/", "--json"]
+            )
+
+        self.assertEqual(exit_code, 3)
+        self.assertEqual(payload["command"], "handoff")
+        self.assertEqual(payload["next_action"], "auth_login")
+        self.assertIn("attend auth login", payload["suggested_command"])
 
     def test_build_playwright_storage_state_accepts_cookie_header(self) -> None:
         payload = build_playwright_storage_state(

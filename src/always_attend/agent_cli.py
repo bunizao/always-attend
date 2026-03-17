@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from always_attend.agent_protocol import AttendanceStateItem, MatchResult, SourceArtifact, SubmissionAttempt, TraceEvent
+from always_attend.agent_protocol import AttendanceStateItem, CandidateRecord, MatchResult, SourceArtifact, SubmissionAttempt, TraceEvent
 from always_attend.attendance_state_reader import AttendanceStateReader
 from always_attend.matcher import match_open_items
 from always_attend.okta_client import OktaCliError, OktaClient
@@ -73,6 +73,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
     inspect_subparsers = inspect_parser.add_subparsers(dest="inspect_command", required=True)
     inspect_state = inspect_subparsers.add_parser("state", help="Read and classify Units.aspx DOM state.")
     inspect_state.add_argument("--target", default=_default_target())
+    inspect_state.add_argument("--demo", action="store_true")
     inspect_state.add_argument("--headed", action="store_true")
     inspect_state.add_argument("--course", action="append", default=[])
     inspect_state.add_argument("--json", action="store_true")
@@ -91,6 +92,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
     handoff_parser.add_argument("--sources", default=_default_sources())
     handoff_parser.add_argument("--course", action="append", default=[])
     handoff_parser.add_argument("--week", type=int)
+    handoff_parser.add_argument("--demo", action="store_true")
     handoff_parser.add_argument("--headed", action="store_true")
     handoff_parser.add_argument("--json", action="store_true")
 
@@ -101,6 +103,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
     submit_parser.add_argument("--target", default=_default_target())
     submit_parser.add_argument("--input")
     submit_parser.add_argument("--plan")
+    submit_parser.add_argument("--demo", action="store_true")
     submit_parser.add_argument("--dry-run", action="store_true")
     submit_parser.add_argument("--headed", action="store_true")
     submit_parser.add_argument("--min-confidence", type=float, default=0.80)
@@ -110,6 +113,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
     report_parser = subparsers.add_parser("report", help="Generate a stable summary from current state or a saved artifact.")
     report_parser.add_argument("--input")
     report_parser.add_argument("--target", default=_default_target())
+    report_parser.add_argument("--demo", action="store_true")
     report_parser.add_argument("--source", action="append", default=[])
     report_parser.add_argument("--course", action="append", default=[])
     report_parser.add_argument("--week", type=int)
@@ -128,6 +132,7 @@ def _add_pipeline_args(parser: argparse.ArgumentParser, *, include_submit_contro
     parser.add_argument("--target", default=_default_target())
     parser.add_argument("--mode", default="fill_all_open")
     parser.add_argument("--sources", default=_default_sources())
+    parser.add_argument("--demo", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--min-confidence", type=float, default=0.80)
     parser.add_argument("--max-retries", type=int, default=1)
@@ -192,6 +197,156 @@ def _load_json_file(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _session_missing_payload(command: str, target: str, error: str) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "command": command,
+        "error": error,
+        "next_action": "auth_login",
+        "suggested_command": f"attend auth login {target} --json",
+        "demo_command": "attend handoff --demo --json",
+        "message": "A stored session is required before this command can access the attendance site.",
+        "exit_code": 3,
+    }
+
+
+def _demo_handoff_payload(target: str) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "command": "handoff",
+        "message": "Demo AI handoff package generated.",
+        "data": {
+            "target": target or "https://attendance.example.edu/student/",
+            "source_priority": _requested_sources(csv_text=_default_sources()),
+            "open_items": [
+                {
+                    "course_code": "FIT2099",
+                    "slot_label": "Workshop 01",
+                    "class_type": "workshop",
+                    "date": "2026-03-17",
+                    "time_range": "10:00-12:00",
+                    "group": "A1",
+                }
+            ],
+            "candidate_hints": [],
+            "artifacts": [
+                {
+                    "source": "edstem",
+                    "command": ["edstem", "threads", "30595", "--json"],
+                    "course_codes": ["FIT2099"],
+                    "week_hints": [7],
+                    "group_hints": ["A1"],
+                    "artifact_kind": "mixed",
+                    "image_urls": ["https://example.test/code.png"],
+                    "text_snippets": ["FIT2099 Week 7 Workshop Group A1 code is shown in the linked image."],
+                    "notes": ["Demo payload for first-time agent validation."],
+                }
+            ],
+            "plan_contract": {
+                "required_fields": ["course_code", "week", "slot", "code"],
+                "shape": [
+                    {
+                        "course_code": "FIT2099",
+                        "week": 7,
+                        "slot": "Workshop 01",
+                        "code": "ABCDE",
+                    }
+                ],
+            },
+            "instructions": [
+                "Treat open_items from the attendance site as the source of truth.",
+                "Use text snippets and image_urls from artifacts as evidence for multimodal analysis.",
+                "Infer the most likely attendance codes from source evidence, then write a JSON plan with course_code, week, slot, and code.",
+                "Pass that plan to attend submit --plan ... --json or continue with attend report for review.",
+            ],
+            "trace": [],
+        },
+        "exit_code": 0,
+    }
+
+
+def _demo_state_items() -> tuple[list[AttendanceStateItem], list[TraceEvent]]:
+    items = [
+        AttendanceStateItem(
+            item_id="demo:FIT2099:Workshop01",
+            course_code="FIT2099",
+            class_type="workshop",
+            slot_label="Workshop 01",
+            date="2026-03-17",
+            time_range="10:00-12:00",
+            group="A1",
+            anchor="17_Mar_26",
+            dom_state="open",
+            reason="Demo entry link is available.",
+            position=0,
+            raw_text="FIT2099 Workshop 01 Group A1 10:00-12:00",
+        )
+    ]
+    trace = [
+        TraceEvent(
+            stage="inspect",
+            code="demo_state_loaded",
+            message="Demo attendance state loaded without live credentials.",
+            details={"item_count": len(items)},
+        )
+    ]
+    return items, trace
+
+
+def _demo_matches() -> list[MatchResult]:
+    return [
+        MatchResult(
+            item_id="demo:FIT2099:Workshop01",
+            course_code="FIT2099",
+            slot_label="Workshop 01",
+            candidate_code="ABCDE",
+            confidence=0.97,
+            reason="Demo structured match produced a high-confidence candidate.",
+            matched_fields=["course_code", "class_type", "date", "time_range", "group"],
+            conflicting_fields=[],
+            source="edstem",
+            class_type="workshop",
+            date="2026-03-17",
+            time_range="10:00-12:00",
+            group="A1",
+            raw_slot="Workshop 01",
+        )
+    ]
+
+
+def _demo_candidates() -> list[CandidateRecord]:
+    return [
+        CandidateRecord(
+            source="edstem",
+            course_code="FIT2099",
+            class_type="workshop",
+            date="2026-03-17",
+            time_range="10:00-12:00",
+            group="A1",
+            raw_slot="Workshop 01",
+            code="ABCDE",
+            evidence="$.artifacts[0].text_snippets[0]",
+            extraction_mode="demo_text",
+            confidence_hint=0.97,
+        )
+    ]
+
+
+def _demo_attempts() -> list[SubmissionAttempt]:
+    return [
+        SubmissionAttempt(
+            item_id="demo:FIT2099:Workshop01",
+            course_code="FIT2099",
+            slot_label="Workshop 01",
+            candidate_code="ABCDE",
+            confidence=0.97,
+            state="submitted_ok",
+            reason="Demo submission simulated a successful portal submit.",
+            source="edstem",
+        )
+    ]
+
+
 async def _inspect_state(target: str, *, headed: bool, courses: list[str]) -> tuple[list[AttendanceStateItem], list[TraceEvent]]:
     session_manager = SessionManager()
     session_manager.ensure_storage_state(target)
@@ -238,6 +393,29 @@ async def _pipeline_match(
 
 
 async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
+    if args.demo or not (args.target or "").strip() or (args.dry_run and not (args.target or "").strip()):
+        items, trace = _demo_state_items()
+        candidates = _demo_candidates()
+        matches = _demo_matches()
+        attempts = _demo_attempts()
+        report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
+        report["command"] = "run"
+        report["message"] = (
+            "Demo AI-native attendance run completed."
+            if args.demo
+            else "Demo AI-native attendance run completed because no target was configured for dry-run."
+        )
+        if not args.demo and not (args.target or "").strip() and not args.dry_run:
+            report["message"] = "Demo AI-native attendance run completed because no target was configured."
+        report["data"] = {
+            "items": [item.to_dict() for item in items],
+            "candidates": [item.to_dict() for item in candidates],
+            "artifacts": _demo_handoff_payload(args.target).get("data", {}).get("artifacts", []),
+            "matches": [item.to_dict() for item in matches],
+            "attempts": [item.to_dict() for item in attempts],
+        }
+        report["exit_code"] = 0
+        return report
     target = _require_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
@@ -310,6 +488,22 @@ def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
+    if args.demo or not (args.target or "").strip():
+        items, trace = _demo_state_items()
+        return {
+            "status": "ok",
+            "command": "inspect.state",
+            "message": (
+                "Demo attendance site state loaded."
+                if args.demo
+                else "Demo attendance site state loaded because no target was configured."
+            ),
+            "data": {
+                "items": [item.to_dict() for item in items],
+                "trace": [item.to_dict() for item in trace],
+            },
+            "exit_code": 0,
+        }
     target = _require_target(args.target)
     items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
     return {
@@ -351,8 +545,16 @@ async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
+    if args.demo:
+        return _demo_handoff_payload((args.target or "").strip())
     target = _require_target(args.target)
-    items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
+
+    try:
+        items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
+    except (OktaCliError, RuntimeError) as exc:
+        if "No stored session found" in str(exc):
+            return _session_missing_payload("handoff", target, str(exc))
+        raise
     requested_sources = _requested_sources(csv_text=args.sources)
     candidates, collect_trace, artifacts = collect_candidates_for_sources(
         items=items,
@@ -398,6 +600,23 @@ async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
+    if args.demo:
+        items, trace = _demo_state_items()
+        matches = _demo_matches()
+        candidates = _demo_candidates()
+        return {
+            "status": "ok",
+            "command": "match",
+            "message": "Demo structured matching completed.",
+            "data": {
+                "items": [item.to_dict() for item in items],
+                "candidates": [item.to_dict() for item in candidates],
+                "artifacts": _demo_handoff_payload(args.target).get("data", {}).get("artifacts", []),
+                "matches": [item.to_dict() for item in matches],
+                "trace": [item.to_dict() for item in trace],
+            },
+            "exit_code": 0,
+        }
     target = _require_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
@@ -422,6 +641,20 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
+    if args.demo:
+        items, trace = _demo_state_items()
+        matches = _demo_matches()
+        attempts = _demo_attempts()
+        report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
+        report["command"] = "submit"
+        report["message"] = "Demo submit stage completed."
+        report["data"] = {
+            "items": [item.to_dict() for item in items],
+            "matches": [item.to_dict() for item in matches],
+            "attempts": [item.to_dict() for item in attempts],
+        }
+        report["exit_code"] = 0
+        return report
     if args.plan:
         entries = load_submission_plan(Path(args.plan))
         summary = plan_summary(entries)
@@ -478,6 +711,22 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
+    if args.demo:
+        items, trace = _demo_state_items()
+        matches = _demo_matches()
+        attempts = _demo_attempts()
+        report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
+        report["command"] = "report"
+        report["message"] = "Demo structured report generated."
+        report["data"] = {
+            "items": [item.to_dict() for item in items],
+            "candidates": [item.to_dict() for item in _demo_candidates()],
+            "artifacts": _demo_handoff_payload(args.target).get("data", {}).get("artifacts", []),
+            "matches": [item.to_dict() for item in matches],
+            "attempts": [item.to_dict() for item in attempts],
+        }
+        report["exit_code"] = 0
+        return report
     if args.input:
         payload = _load_json_file(args.input)
         if {"summary", "trace", "metrics"} <= set(payload):
@@ -570,7 +819,11 @@ def main(argv: list[str]) -> int:
     except AgentCliInputError as exc:
         payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 2}
     except OktaCliError as exc:
-        payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 3}
+        target = getattr(args, "target", None) or getattr(args, "url", "")
+        if "No stored session found" in str(exc) and target:
+            payload = _session_missing_payload(args.command, target, str(exc))
+        else:
+            payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 3}
     except (SourceCommandError, SubmissionPlanError) as exc:
         payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 1}
     return _emit(payload, json_output=json_output)
