@@ -89,6 +89,12 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("--sources", result.stdout)
         self.assertIn("--min-confidence", result.stdout)
 
+    def test_agent_handoff_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "handoff", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("--sources", result.stdout)
+        self.assertIn("--week", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

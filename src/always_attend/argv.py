@@ -10,6 +10,7 @@ CLI_EXAMPLES = (
     "  attend inspect state --target https://attendance.example.edu/student/ --json\n"
     "  attend auth login https://attendance.example.edu --json\n"
     "  attend fetch --source edstem --course FIT2099 --kind threads --json\n"
+    "  attend handoff --target https://attendance.example.edu/student/ --json\n"
     "  attend match --target https://attendance.example.edu/student/ --json\n"
     "  attend report --target https://attendance.example.edu/student/ --json\n"
     "  attend doctor --json\n"

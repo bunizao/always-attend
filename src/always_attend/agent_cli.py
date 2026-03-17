@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from always_attend.agent_protocol import AttendanceStateItem, MatchResult, SubmissionAttempt, TraceEvent
+from always_attend.agent_protocol import AttendanceStateItem, MatchResult, SourceArtifact, SubmissionAttempt, TraceEvent
 from always_attend.attendance_state_reader import AttendanceStateReader
 from always_attend.matcher import match_open_items
 from always_attend.okta_client import OktaCliError, OktaClient
@@ -85,6 +85,14 @@ def build_agent_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument("--week", type=int)
     fetch_parser.add_argument("--headed", action="store_true")
     fetch_parser.add_argument("--json", action="store_true")
+
+    handoff_parser = subparsers.add_parser("handoff", help="Prepare text and image evidence for external multimodal AI.")
+    handoff_parser.add_argument("--target", default=_default_target())
+    handoff_parser.add_argument("--sources", default=_default_sources())
+    handoff_parser.add_argument("--course", action="append", default=[])
+    handoff_parser.add_argument("--week", type=int)
+    handoff_parser.add_argument("--headed", action="store_true")
+    handoff_parser.add_argument("--json", action="store_true")
 
     match_parser = subparsers.add_parser("match", help="Match open attendance items against source candidates.")
     _add_pipeline_args(match_parser, include_submit_controls=False)
@@ -201,10 +209,10 @@ async def _pipeline_match(
     sources: list[str],
     week: int | None,
     courses: list[str],
-) -> tuple[list[AttendanceStateItem], list[Any], list[MatchResult], list[TraceEvent]]:
+) -> tuple[list[AttendanceStateItem], list[Any], list[SourceArtifact], list[MatchResult], list[TraceEvent]]:
     items, trace = await _inspect_state(target, headed=headed, courses=courses)
     session_manager = SessionManager()
-    candidates, collect_trace = collect_candidates_for_sources(
+    candidates, collect_trace, artifacts = collect_candidates_for_sources(
         items=items,
         sources=sources,
         session_manager=session_manager,
@@ -226,12 +234,12 @@ async def _pipeline_match(
             },
         )
     )
-    return items, candidates, matches, trace
+    return items, candidates, artifacts, matches, trace
 
 
 async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
     target = _require_target(args.target)
-    items, candidates, matches, trace = await _pipeline_match(
+    items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
         sources=_parse_sources(args.sources),
@@ -263,6 +271,7 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
     report["data"] = {
         "items": [item.to_dict() for item in final_items],
         "candidates": [item.to_dict() for item in candidates],
+        "artifacts": [item.to_dict() for item in artifacts],
         "matches": [item.to_dict() for item in matches],
         "attempts": [item.to_dict() for item in attempts],
     }
@@ -318,7 +327,7 @@ async def _handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
 async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
     target = _require_target(args.target)
     items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
-    candidates, collect_trace = collect_candidates_for_sources(
+    candidates, collect_trace, artifacts = collect_candidates_for_sources(
         items=items,
         sources=_requested_sources(args.source),
         session_manager=SessionManager(),
@@ -334,15 +343,52 @@ async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
         "data": {
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
+            "artifacts": [item.to_dict() for item in artifacts],
             "trace": [item.to_dict() for item in trace],
         },
         "exit_code": 0 if candidates else 4,
     }
 
 
+async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
+    target = _require_target(args.target)
+    items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
+    requested_sources = _requested_sources(csv_text=args.sources)
+    candidates, collect_trace, artifacts = collect_candidates_for_sources(
+        items=items,
+        sources=requested_sources,
+        session_manager=SessionManager(),
+        target_url=target,
+        week=args.week,
+        explicit_courses=args.course,
+    )
+    trace.extend(collect_trace)
+    open_items = [item.to_dict() for item in items if item.dom_state == "open"]
+    return {
+        "status": "ok",
+        "command": "handoff",
+        "message": "AI handoff package generated.",
+        "data": {
+            "target": target,
+            "source_priority": requested_sources,
+            "open_items": open_items,
+            "candidate_hints": [item.to_dict() for item in candidates],
+            "artifacts": [item.to_dict() for item in artifacts],
+            "instructions": [
+                "Treat open_items from the attendance site as the source of truth.",
+                "Use text snippets and image_urls from artifacts as evidence for multimodal analysis.",
+                "Infer the most likely attendance codes from source evidence, then write a JSON plan with course_code, week, slot, and code.",
+                "Pass that plan to attend submit --plan ... --json or continue with attend report for review.",
+            ],
+            "trace": [item.to_dict() for item in trace],
+        },
+        "exit_code": 0 if open_items else 4,
+    }
+
+
 async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
     target = _require_target(args.target)
-    items, candidates, matches, trace = await _pipeline_match(
+    items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
         sources=_parse_sources(args.sources),
@@ -356,6 +402,7 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
         "data": {
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
+            "artifacts": [item.to_dict() for item in artifacts],
             "matches": [item.to_dict() for item in matches],
             "trace": [item.to_dict() for item in trace],
         },
@@ -386,7 +433,7 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
         matches = [_match_from_dict(item) for item in payload.get("matches", [])]
         trace = [_event_from_dict(item) for item in payload.get("trace", [])]
     else:
-        items, _, matches, trace = await _pipeline_match(
+        items, _, _, matches, trace = await _pipeline_match(
             target=target,
             headed=args.headed,
             sources=_requested_sources(csv_text=_default_sources()),
@@ -438,7 +485,7 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
         return report
 
     target = _require_target(args.target)
-    items, candidates, matches, trace = await _pipeline_match(
+    items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
         sources=_requested_sources(args.source, _default_sources()),
@@ -451,6 +498,7 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
     report["data"] = {
         "items": [item.to_dict() for item in items],
         "candidates": [item.to_dict() for item in candidates],
+        "artifacts": [item.to_dict() for item in artifacts],
         "matches": [item.to_dict() for item in matches],
     }
     report["exit_code"] = exit_code_for_report(report)
@@ -496,6 +544,8 @@ def main(argv: list[str]) -> int:
             payload = asyncio.run(_handle_inspect(args))
         elif args.command == "fetch":
             payload = asyncio.run(_handle_fetch(args))
+        elif args.command == "handoff":
+            payload = asyncio.run(_handle_handoff(args))
         elif args.command == "match":
             payload = asyncio.run(_handle_match(args))
         elif args.command == "submit":

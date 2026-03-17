@@ -126,7 +126,7 @@ class AgentCliTests(unittest.TestCase):
         async_payload = {
             "status": "ok",
             "command": "fetch",
-            "data": {"items": [], "candidates": [{"source": "edstem", "code": "ABCDE"}], "trace": []},
+            "data": {"items": [], "candidates": [{"source": "edstem", "code": "ABCDE"}], "artifacts": [], "trace": []},
             "exit_code": 0,
         }
         with patch("always_attend.agent_cli._handle_fetch", new=AsyncMock(return_value=async_payload)):
@@ -136,6 +136,26 @@ class AgentCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["data"]["candidates"][0]["source"], "edstem")
+
+    def test_handoff_command_returns_artifacts(self) -> None:
+        async_payload = {
+            "status": "ok",
+            "command": "handoff",
+            "data": {
+                "open_items": [{"course_code": "FIT2099"}],
+                "candidate_hints": [],
+                "artifacts": [{"source": "edstem", "image_urls": ["https://example.test/code.png"]}],
+                "trace": [],
+            },
+            "exit_code": 0,
+        }
+        with patch("always_attend.agent_cli._handle_handoff", new=AsyncMock(return_value=async_payload)):
+            exit_code, payload = self.run_agent_command(
+                ["handoff", "--target", "https://attendance.example.test/student/", "--json"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["data"]["artifacts"][0]["source"], "edstem")
 
     def test_build_playwright_storage_state_accepts_cookie_header(self) -> None:
         payload = build_playwright_storage_state(
