@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
-import tempfile
-import urllib.request
 from html.parser import HTMLParser
-from pathlib import Path
 from typing import Any
 
 from always_attend.agent_protocol import CandidateRecord, TraceEvent
@@ -257,78 +253,6 @@ def parse_html_table_candidates(
     return candidates
 
 
-def _ocr_image_text(path_or_url: str) -> tuple[str | None, str | None]:
-    if not path_or_url:
-        return None, "empty_image_reference"
-
-    image_path: Path | None = None
-    temp_file: tempfile.NamedTemporaryFile[bytes] | None = None
-    try:
-        if re.match(r"^https?://", path_or_url):
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(path_or_url).suffix or ".png")
-            with urllib.request.urlopen(path_or_url, timeout=20) as response:
-                temp_file.write(response.read())
-            temp_file.close()
-            image_path = Path(temp_file.name)
-        else:
-            image_path = Path(path_or_url).expanduser()
-        if not image_path.exists():
-            return None, "image_not_found"
-
-        result = subprocess.run(
-            ["tesseract", str(image_path), "stdout"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and (result.stdout or "").strip():
-            return result.stdout, None
-        if result.returncode == 127:
-            return None, "tesseract_missing"
-        return None, (result.stderr or "ocr_failed").strip()
-    except FileNotFoundError:
-        return None, "tesseract_missing"
-    except Exception as exc:  # pragma: no cover - defensive
-        return None, str(exc)
-    finally:
-        if temp_file is not None:
-            try:
-                Path(temp_file.name).unlink(missing_ok=True)
-            except Exception:
-                pass
-
-
-def parse_image_candidates(
-    source: str,
-    image_reference: str,
-    *,
-    courses: set[str],
-    week: int | None,
-    evidence: str,
-) -> tuple[list[CandidateRecord], TraceEvent | None]:
-    """Extract code candidates from an image reference using OCR."""
-    text, error = _ocr_image_text(image_reference)
-    if not text:
-        return [], TraceEvent(
-            stage="ocr",
-            code="ocr_unavailable",
-            message="Image OCR backend was unavailable for a candidate source.",
-            details={
-                "source": source,
-                "image_reference": image_reference,
-                "reason": error or "unknown",
-            },
-        )
-    candidates = _candidate_from_text(
-        source=source,
-        text=text,
-        evidence=evidence,
-        courses=courses,
-        week=week,
-        extraction_mode="ocr",
-    )
-    return candidates, None
-
-
 def parse_candidate_records(
     *,
     source: str,
@@ -365,17 +289,18 @@ def parse_candidate_records(
         )
         candidates.extend(text_candidates)
 
-        if re.search(r"\.(?:png|jpg|jpeg|webp)\b", text, re.I):
-            image_candidates, event = parse_image_candidates(
-                source,
-                text.strip(),
-                courses=course_set,
-                week=week,
-                evidence=path,
+        if re.search(r"\.(?:png|jpg|jpeg|webp|gif)\b", text, re.I):
+            trace.append(
+                TraceEvent(
+                    stage="collect",
+                    code="image_reference_detected",
+                    message="Image evidence was detected and should be handed to a multimodal model.",
+                    details={
+                        "source": source,
+                        "evidence": path,
+                    },
+                )
             )
-            candidates.extend(image_candidates)
-            if event is not None:
-                trace.append(event)
 
     deduped: list[CandidateRecord] = []
     seen: set[str] = set()

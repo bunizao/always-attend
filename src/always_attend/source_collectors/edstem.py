@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from always_attend.agent_protocol import CandidateRecord, TraceEvent
+from always_attend.agent_protocol import CandidateRecord, SourceArtifact, TraceEvent
 from always_attend.code_parser import parse_candidate_records
-from always_attend.source_collectors.base import collect_course_filters, extract_course_code, find_executable, run_json_command
+from always_attend.source_collectors.base import artifact_from_payload, collect_course_filters, extract_course_code, find_executable, run_json_command
 
 
 def _match_edstem_course_ids(payload: Any, courses: set[str]) -> list[int]:
@@ -31,7 +31,7 @@ def collect_edstem_candidates(
     courses: set[str],
     week: int | None,
     env: dict[str, str],
-) -> tuple[list[CandidateRecord], list[TraceEvent]]:
+) -> tuple[list[CandidateRecord], list[TraceEvent], list[SourceArtifact]]:
     """Collect candidate records from the Ed CLI."""
     del target_url
     executable = find_executable(("edstem-cli", "edstem"))
@@ -43,12 +43,12 @@ def collect_edstem_candidates(
                 message="Edstem CLI was not available.",
                 details={"tried": ["edstem-cli", "edstem"]},
             )
-        ]
+        ], []
 
     trace: list[TraceEvent] = []
     courses_payload, event = run_json_command([executable, "courses", "--json"], env=env)
     if event is not None:
-        return [], [event]
+        return [], [event], []
 
     matched_ids = _match_edstem_course_ids(courses_payload, collect_course_filters(courses))
     if not matched_ids:
@@ -59,9 +59,10 @@ def collect_edstem_candidates(
                 message="No Edstem course IDs matched the requested courses.",
                 details={"courses": sorted(courses)},
             )
-        ]
+        ], []
 
     candidates: list[CandidateRecord] = []
+    artifacts: list[SourceArtifact] = []
     for course_id in matched_ids:
         for command in (
             [executable, "threads", str(course_id), "--json", "-n", "50"],
@@ -79,4 +80,12 @@ def collect_edstem_candidates(
             )
             candidates.extend(command_candidates)
             trace.extend(parse_trace)
-    return candidates, trace
+            artifacts.append(
+                artifact_from_payload(
+                    source="edstem",
+                    command=command,
+                    payload=payload,
+                    requested_courses=courses,
+                )
+            )
+    return candidates, trace, artifacts

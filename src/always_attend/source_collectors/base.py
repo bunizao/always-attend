@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from typing import Any
 
+from always_attend.ai_handoff import build_source_artifact
+from always_attend.agent_protocol import SourceArtifact
 from always_attend.agent_protocol import TraceEvent
 
 
@@ -70,3 +72,19 @@ def collect_course_filters(open_courses: set[str], explicit_courses: list[str] |
     if selected:
         return selected
     return {item.upper() for item in open_courses if item}
+
+
+def artifact_from_payload(
+    *,
+    source: str,
+    command: list[str],
+    payload: Any,
+    requested_courses: set[str],
+) -> SourceArtifact:
+    """Build a handoff artifact from a source payload."""
+    return build_source_artifact(
+        source=source,
+        command=command,
+        payload=payload,
+        requested_courses=requested_courses,
+    )

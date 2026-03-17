@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from always_attend.agent_protocol import CandidateRecord, TraceEvent
+from always_attend.agent_protocol import CandidateRecord, SourceArtifact, TraceEvent
 from always_attend.code_parser import parse_candidate_records
-from always_attend.source_collectors.base import find_executable, run_json_command
+from always_attend.source_collectors.base import artifact_from_payload, find_executable, run_json_command
 
 
 def collect_gmail_candidates(
@@ -15,7 +15,7 @@ def collect_gmail_candidates(
     courses: set[str],
     week: int | None,
     env: dict[str, str],
-) -> tuple[list[CandidateRecord], list[TraceEvent]]:
+) -> tuple[list[CandidateRecord], list[TraceEvent], list[SourceArtifact]]:
     """Collect candidate records from a Gmail CLI if available."""
     del target_url
     executable = find_executable(("gmail-cli", "gmail"))
@@ -27,7 +27,7 @@ def collect_gmail_candidates(
                 message="Gmail CLI was not available.",
                 details={"tried": ["gmail-cli", "gmail"]},
             )
-        ]
+        ], []
 
     command_options = [
         [executable, "messages", "--json"],
@@ -43,7 +43,7 @@ def collect_gmail_candidates(
         trace.append(event)
         payload = None
     if payload is None:
-        return [], trace
+        return [], trace, []
 
     candidates, parse_trace = parse_candidate_records(
         source="gmail",
@@ -51,4 +51,10 @@ def collect_gmail_candidates(
         courses=courses,
         week=week,
     )
-    return candidates, trace + parse_trace
+    artifact = artifact_from_payload(
+        source="gmail",
+        command=command,
+        payload=payload,
+        requested_courses=courses,
+    )
+    return candidates, trace + parse_trace, [artifact]

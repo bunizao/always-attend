@@ -99,7 +99,6 @@ class SessionManager:
             self._command_status("moodle-cli", ("moodle-cli", "moodle")),
             self._command_status("edstem", ("edstem-cli", "edstem")),
             self._command_status("gogcli", ("gogcli", "gog")),
-            self._command_status("tesseract", ("tesseract",)),
             self._python_module_status("pyyaml", "yaml"),
         ]
 

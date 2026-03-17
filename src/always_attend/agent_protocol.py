@@ -77,6 +77,22 @@ class CandidateRecord:
 
 
 @dataclass(frozen=True)
+class SourceArtifact:
+    """Structured source payload handed to an external AI model."""
+
+    source: str
+    command: list[str]
+    course_codes: list[str]
+    image_urls: list[str]
+    text_snippets: list[str]
+    notes: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly artifact payload."""
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MatchResult:
     """Best candidate chosen for an open attendance item."""
 
