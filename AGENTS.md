@@ -27,7 +27,7 @@ Core agent-native modules live in `src/always_attend/`:
 - `agent_protocol.py`: stable state, candidate, match, submit, and trace types
 - `session_manager.py`: shared Okta session and dependency checks
 - `attendance_state_reader.py`: read and classify attendance DOM state
-- `source_collectors/`: Gmail, Moodle, Ed, GOG, and OCR collectors
+- `source_collectors/`: Gmail, Moodle, Ed, and GOG collectors
 - `code_parser.py`: extract structured code candidates
 - `matcher.py`: five-field matching and confidence scoring
 - `submitter.py`: guarded submit flow and post-submit verification
@@ -53,7 +53,7 @@ Use it only as a transition layer for browser interactions that have not yet bee
 - Attendance state comes first.
   Read `Units.aspx` or `Entry.aspx` before collecting external data.
 - Source priority is fixed.
-  Use: attendance metadata -> Gmail plain text -> Moodle plain text -> Moodle HTML table -> Ed text -> Ed images -> OCR fallback.
+  Use: attendance metadata -> Gmail plain text -> Moodle plain text -> Moodle HTML table -> Ed text -> image links for multimodal analysis.
 - Matching is structured.
   Match on `course_code`, `class_type`, `date`, `time_range`, and `group`.
 - Submit is guarded.
@@ -69,8 +69,9 @@ The next iteration should improve the tool in this order:
 1. Replace more legacy `src/core/submit.py` behavior with native logic inside `submitter.py`.
 2. Add first-class support for separate groups in Moodle and Ed collectors.
 3. Improve candidate parsing for Moodle rich content and image-heavy Ed posts.
-4. Strengthen submit-state classification for incorrect code, wrong week, locked DOM, and post-submit unverified states.
-5. Expand `attend run` end-to-end tests with realistic saved artifacts and dry-run scenarios.
+4. Improve the AI handoff package so image URLs and text evidence are easier for multimodal models to consume.
+5. Strengthen submit-state classification for incorrect code, wrong week, locked DOM, and post-submit unverified states.
+6. Expand `attend run` end-to-end tests with realistic saved artifacts and dry-run scenarios.
 
 Do not spend the next iteration on packaging, release automation, or UI polish.
 This branch is not trying to be release-ready yet.
