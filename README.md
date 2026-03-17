@@ -216,6 +216,10 @@ Primary command: `attend`
 - The workflow validates that the tag matches `pyproject.toml`, builds `sdist` and `wheel`, creates a GitHub Release, and publishes to PyPI.
 - PyPI publishing is configured for Trusted Publishing, so the GitHub repository still needs to be registered as a trusted publisher in the target PyPI project.
 
+## Reflection
+
+> I kept building, not to compete with AI, but to finish what I started. I kept adding new ideas, refactoring, polishing small things that no one else would notice. Slowly, the project became not just a tool but a reflection of my curiosity and patience. Finishing it reminded me that the value isn't only in what a program does, but in what I learn while making it.
+
 ## Environment Variables
 
 | Variable | Type | Required | Description | Example |
