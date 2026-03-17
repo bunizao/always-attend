@@ -1,4 +1,4 @@
-"""Agent-first CLI commands for external auth, fetch, resolve, and submit workflows."""
+"""Agent-first CLI commands for the AI-native attendance workflow."""
 
 from __future__ import annotations
 
@@ -9,30 +9,54 @@ import os
 from pathlib import Path
 from typing import Any
 
-from always_attend.okta_client import OktaCliError, OktaClient, write_storage_state_from_okta
-from always_attend.paths import storage_state_file
-from always_attend.source_clients import SourceCommandError, SourceRequest, fetch_from_source
+from always_attend.agent_protocol import AttendanceStateItem, MatchResult, SubmissionAttempt, TraceEvent
+from always_attend.attendance_state_reader import AttendanceStateReader
+from always_attend.matcher import match_open_items
+from always_attend.okta_client import OktaCliError, OktaClient
+from always_attend.reporter import build_report, exit_code_for_report
+from always_attend.session_manager import SessionManager
+from always_attend.source_collectors import collect_candidates_for_sources
+from always_attend.source_clients import SourceCommandError
 from always_attend.submission_plan import (
     SubmissionPlanError,
     load_submission_plan,
     materialize_plan,
     plan_summary,
 )
+from always_attend.submitter import Submitter
+
+
+class AgentCliInputError(RuntimeError):
+    """Raised when agent CLI input is invalid."""
+
+
+def _default_target() -> str:
+    return os.getenv("PORTAL_URL", "")
+
+
+def _default_sources() -> str:
+    return "attendance,gmail,moodle,edstem"
 
 
 def build_agent_parser() -> argparse.ArgumentParser:
-    """Build the agent-first command tree."""
+    """Build the AI-native command tree."""
     parser = argparse.ArgumentParser(
         prog="attend",
-        description="Agent-first CLI for auth, source fetch, plan resolution, and attendance submission.",
+        description="AI-native attendance CLI for Codex/OpenClaw-style agents.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="Inspect, collect, match, submit, and report in one command.")
+    _add_pipeline_args(run_parser)
+
+    doctor_parser = subparsers.add_parser("doctor", help="Check CLI and OCR dependencies.")
+    doctor_parser.add_argument("--json", action="store_true")
 
     auth_parser = subparsers.add_parser("auth", help="Authenticate via the external okta CLI.")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
 
-    auth_login = auth_subparsers.add_parser("login", help="Login via okta and store the shared session.")
-    auth_login.add_argument("url", nargs="?", default=os.getenv("PORTAL_URL", ""))
+    auth_login = auth_subparsers.add_parser("login", help="Login via okta and refresh the shared session.")
+    auth_login.add_argument("url", nargs="?", default=_default_target())
     auth_login.add_argument("--username")
     auth_login.add_argument("--password")
     auth_login.add_argument("--totp-secret")
@@ -40,68 +64,218 @@ def build_agent_parser() -> argparse.ArgumentParser:
     auth_login.add_argument("--timeout-ms", type=int, default=60000)
     auth_login.add_argument("--json", action="store_true")
 
-    auth_check = auth_subparsers.add_parser("check", help="Check whether the shared okta session is valid.")
-    auth_check.add_argument("url", nargs="?", default=os.getenv("PORTAL_URL", ""))
+    auth_check = auth_subparsers.add_parser("check", help="Verify the shared okta session.")
+    auth_check.add_argument("url", nargs="?", default=_default_target())
     auth_check.add_argument("--timeout-ms", type=int, default=30000)
     auth_check.add_argument("--json", action="store_true")
 
-    auth_cookies = auth_subparsers.add_parser("cookies", help="Show shared okta cookies for a target URL.")
-    auth_cookies.add_argument("url", nargs="?", default=os.getenv("PORTAL_URL", ""))
-    auth_cookies.add_argument("--domain")
-    auth_cookies.add_argument("--json", action="store_true")
+    inspect_parser = subparsers.add_parser("inspect", help="Inspect runtime state from the attendance site.")
+    inspect_subparsers = inspect_parser.add_subparsers(dest="inspect_command", required=True)
+    inspect_state = inspect_subparsers.add_parser("state", help="Read and classify Units.aspx DOM state.")
+    inspect_state.add_argument("--target", default=_default_target())
+    inspect_state.add_argument("--headed", action="store_true")
+    inspect_state.add_argument("--course", action="append", default=[])
+    inspect_state.add_argument("--json", action="store_true")
 
-    fetch_parser = subparsers.add_parser("fetch", help="Fetch source data via external CLIs.")
-    fetch_parser.add_argument("--source", required=True, choices=["moodle", "edstem", "gog"])
-    fetch_parser.add_argument("--kind", default="auto")
-    fetch_parser.add_argument("--course")
+    fetch_parser = subparsers.add_parser("fetch", help="Collect normalized candidates from external sources.")
+    fetch_parser.add_argument("--target", default=_default_target())
+    fetch_parser.add_argument("--source", action="append", default=[])
+    fetch_parser.add_argument("--kind")
+    fetch_parser.add_argument("--course", action="append", default=[])
     fetch_parser.add_argument("--week", type=int)
-    fetch_parser.add_argument("--limit", type=int)
-    fetch_parser.add_argument("--url")
-    fetch_parser.add_argument("--exec-arg", action="append", default=[])
+    fetch_parser.add_argument("--headed", action="store_true")
     fetch_parser.add_argument("--json", action="store_true")
 
-    resolve_parser = subparsers.add_parser("resolve", help="Validate and normalize a submission plan JSON file.")
+    match_parser = subparsers.add_parser("match", help="Match open attendance items against source candidates.")
+    _add_pipeline_args(match_parser, include_submit_controls=False)
+
+    submit_parser = subparsers.add_parser("submit", help="Submit structured matches or a legacy plan.")
+    submit_parser.add_argument("--target", default=_default_target())
+    submit_parser.add_argument("--input")
+    submit_parser.add_argument("--plan")
+    submit_parser.add_argument("--dry-run", action="store_true")
+    submit_parser.add_argument("--headed", action="store_true")
+    submit_parser.add_argument("--min-confidence", type=float, default=0.80)
+    submit_parser.add_argument("--max-retries", type=int, default=1)
+    submit_parser.add_argument("--json", action="store_true")
+
+    report_parser = subparsers.add_parser("report", help="Generate a stable summary from current state or a saved artifact.")
+    report_parser.add_argument("--input")
+    report_parser.add_argument("--target", default=_default_target())
+    report_parser.add_argument("--source", action="append", default=[])
+    report_parser.add_argument("--course", action="append", default=[])
+    report_parser.add_argument("--week", type=int)
+    report_parser.add_argument("--headed", action="store_true")
+    report_parser.add_argument("--json", action="store_true")
+
+    resolve_parser = subparsers.add_parser("resolve", help="Validate and normalize a legacy submission plan file.")
     resolve_parser.add_argument("--plan", required=True)
     resolve_parser.add_argument("--output")
     resolve_parser.add_argument("--json", action="store_true")
 
-    submit_parser = subparsers.add_parser("submit", help="Submit attendance using a normalized plan and shared okta session.")
-    submit_parser.add_argument("--plan", required=True)
-    submit_parser.add_argument("--portal-url", default=os.getenv("PORTAL_URL", ""))
-    submit_parser.add_argument("--dry-run", action="store_true")
-    submit_parser.add_argument("--headed", action="store_true")
-    submit_parser.add_argument("--json", action="store_true")
-
     return parser
 
 
+def _add_pipeline_args(parser: argparse.ArgumentParser, *, include_submit_controls: bool = True) -> None:
+    parser.add_argument("--target", default=_default_target())
+    parser.add_argument("--mode", default="fill_all_open")
+    parser.add_argument("--sources", default=_default_sources())
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--min-confidence", type=float, default=0.80)
+    parser.add_argument("--max-retries", type=int, default=1)
+    parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--week", type=int)
+    parser.add_argument("--course", action="append", default=[])
+    parser.add_argument("--json", action="store_true")
+    if not include_submit_controls:
+        return
+
+
 def _emit(payload: dict[str, Any], *, json_output: bool) -> int:
+    exit_code = int(payload.get("exit_code", 0 if payload.get("status") == "ok" else 1))
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0 if payload.get("status") == "ok" else 1
-
+        return exit_code
     if payload.get("status") == "ok":
-        print(payload.get("message") or payload["command"])
-        return 0
+        print(payload.get("message") or payload.get("command") or "ok")
+    else:
+        print(payload.get("error") or "Command failed")
+    return exit_code
 
-    print(payload.get("error") or "Command failed")
-    return 1
 
-
-def _require_url(url: str) -> str:
-    value = (url or "").strip()
+def _require_target(target: str) -> str:
+    value = (target or "").strip()
     if not value:
-        raise SubmissionPlanError("Missing portal URL. Set PORTAL_URL or pass it explicitly.")
+        raise AgentCliInputError("Missing target URL. Set PORTAL_URL or pass --target.")
     return value
+
+
+def _parse_sources(csv_text: str | None, explicit_sources: list[str] | None = None) -> list[str]:
+    if explicit_sources:
+        return [item.lower() for item in explicit_sources if item]
+    values = [item.strip().lower() for item in (csv_text or "").split(",")]
+    return [item for item in values if item and item != "attendance"]
+
+
+def _requested_sources(explicit_sources: list[str] | None = None, csv_text: str | None = None) -> list[str]:
+    sources = _parse_sources(csv_text, explicit_sources)
+    if sources:
+        return sources
+    return _parse_sources(_default_sources())
+
+
+def _item_from_dict(payload: dict[str, Any]) -> AttendanceStateItem:
+    return AttendanceStateItem(**payload)
+
+
+def _match_from_dict(payload: dict[str, Any]) -> MatchResult:
+    return MatchResult(**payload)
+
+
+def _attempt_from_dict(payload: dict[str, Any]) -> SubmissionAttempt:
+    return SubmissionAttempt(**payload)
+
+
+def _event_from_dict(payload: dict[str, Any]) -> TraceEvent:
+    return TraceEvent(**payload)
+
+
+def _load_json_file(path: str) -> Any:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+async def _inspect_state(target: str, *, headed: bool, courses: list[str]) -> tuple[list[AttendanceStateItem], list[TraceEvent]]:
+    session_manager = SessionManager()
+    session_manager.ensure_storage_state(target)
+    return await AttendanceStateReader().inspect(
+        target_url=target,
+        headed=headed,
+        course_filters=courses,
+    )
+
+
+async def _pipeline_match(
+    *,
+    target: str,
+    headed: bool,
+    sources: list[str],
+    week: int | None,
+    courses: list[str],
+) -> tuple[list[AttendanceStateItem], list[Any], list[MatchResult], list[TraceEvent]]:
+    items, trace = await _inspect_state(target, headed=headed, courses=courses)
+    session_manager = SessionManager()
+    candidates, collect_trace = collect_candidates_for_sources(
+        items=items,
+        sources=sources,
+        session_manager=session_manager,
+        target_url=target,
+        week=week,
+        explicit_courses=courses,
+    )
+    trace.extend(collect_trace)
+    matches = match_open_items(items, candidates)
+    trace.append(
+        TraceEvent(
+            stage="match",
+            code="matching_completed",
+            message="Structured matching completed.",
+            details={
+                "item_count": len(items),
+                "candidate_count": len(candidates),
+                "match_count": len(matches),
+            },
+        )
+    )
+    return items, candidates, matches, trace
+
+
+async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
+    target = _require_target(args.target)
+    items, candidates, matches, trace = await _pipeline_match(
+        target=target,
+        headed=args.headed,
+        sources=_parse_sources(args.sources),
+        week=args.week,
+        courses=args.course,
+    )
+    attempts, submit_trace = await Submitter().submit(
+        target_url=target,
+        items=items,
+        matches=matches,
+        min_confidence=args.min_confidence,
+        max_retries=args.max_retries,
+        headed=args.headed,
+        dry_run=args.dry_run,
+    )
+    trace.extend(submit_trace)
+    final_items = items
+    if not args.dry_run:
+        final_items, reread_trace = await _inspect_state(target, headed=args.headed, courses=args.course)
+        trace.extend(reread_trace)
+    report = build_report(
+        items=final_items,
+        matches=matches,
+        attempts=attempts,
+        trace=trace,
+    )
+    report["command"] = "run"
+    report["message"] = "AI-native attendance run completed."
+    report["data"] = {
+        "items": [item.to_dict() for item in final_items],
+        "candidates": [item.to_dict() for item in candidates],
+        "matches": [item.to_dict() for item in matches],
+        "attempts": [item.to_dict() for item in attempts],
+    }
+    report["exit_code"] = exit_code_for_report(report)
+    return report
 
 
 def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
     okta = OktaClient()
-    url = _require_url(args.url)
-
+    target = _require_target(args.url)
     if args.auth_command == "login":
         result = okta.login(
-            url=url,
+            url=target,
             username=args.username,
             password=args.password,
             totp_secret=args.totp_secret,
@@ -113,43 +287,184 @@ def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
             "command": "auth.login",
             "message": "Okta session refreshed.",
             "data": result.payload,
+            "exit_code": 0,
         }
 
-    if args.auth_command == "check":
-        result = okta.check(url=url, timeout_ms=args.timeout_ms)
-        return {
-            "status": "ok",
-            "command": "auth.check",
-            "message": "Okta session check completed.",
-            "data": result.payload,
-        }
-
-    result = okta.cookies(url=url, domain=args.domain)
+    result = okta.check(url=target, timeout_ms=args.timeout_ms)
     return {
         "status": "ok",
-        "command": "auth.cookies",
-        "message": "Okta cookies loaded.",
+        "command": "auth.check",
+        "message": "Okta session check completed.",
         "data": result.payload,
+        "exit_code": 0,
     }
 
 
-def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
-    payload = fetch_from_source(
-        SourceRequest(
-            source=args.source,
-            kind=args.kind,
-            course=args.course,
-            week=args.week,
-            limit=args.limit,
-            url=args.url,
-            exec_args=list(args.exec_arg or []),
-        )
+async def _handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
+    target = _require_target(args.target)
+    items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
+    return {
+        "status": "ok",
+        "command": "inspect.state",
+        "message": "Attendance site state loaded.",
+        "data": {
+            "items": [item.to_dict() for item in items],
+            "trace": [item.to_dict() for item in trace],
+        },
+        "exit_code": 4 if not any(item.dom_state == "open" for item in items) else 0,
+    }
+
+
+async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
+    target = _require_target(args.target)
+    items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
+    candidates, collect_trace = collect_candidates_for_sources(
+        items=items,
+        sources=_requested_sources(args.source),
+        session_manager=SessionManager(),
+        target_url=target,
+        week=args.week,
+        explicit_courses=args.course,
     )
+    trace.extend(collect_trace)
     return {
         "status": "ok",
         "command": "fetch",
-        "message": f"Fetched {args.source} data.",
+        "message": "Source collection completed.",
+        "data": {
+            "items": [item.to_dict() for item in items],
+            "candidates": [item.to_dict() for item in candidates],
+            "trace": [item.to_dict() for item in trace],
+        },
+        "exit_code": 0 if candidates else 4,
+    }
+
+
+async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
+    target = _require_target(args.target)
+    items, candidates, matches, trace = await _pipeline_match(
+        target=target,
+        headed=args.headed,
+        sources=_parse_sources(args.sources),
+        week=args.week,
+        courses=args.course,
+    )
+    return {
+        "status": "ok",
+        "command": "match",
+        "message": "Structured matching completed.",
+        "data": {
+            "items": [item.to_dict() for item in items],
+            "candidates": [item.to_dict() for item in candidates],
+            "matches": [item.to_dict() for item in matches],
+            "trace": [item.to_dict() for item in trace],
+        },
+        "exit_code": 0 if matches else 4,
+    }
+
+
+async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
+    if args.plan:
+        entries = load_submission_plan(Path(args.plan))
+        summary = plan_summary(entries)
+        written_files = materialize_plan(entries)
+        return {
+            "status": "ok",
+            "command": "submit",
+            "message": "Legacy plan materialized for submission.",
+            "data": {
+                "plan": summary,
+                "written_files": written_files,
+            },
+            "exit_code": 0,
+        }
+
+    target = _require_target(args.target)
+    if args.input:
+        payload = _load_json_file(args.input)
+        items = [_item_from_dict(item) for item in payload.get("items", [])]
+        matches = [_match_from_dict(item) for item in payload.get("matches", [])]
+        trace = [_event_from_dict(item) for item in payload.get("trace", [])]
+    else:
+        items, _, matches, trace = await _pipeline_match(
+            target=target,
+            headed=args.headed,
+            sources=_requested_sources(csv_text=_default_sources()),
+            week=None,
+            courses=[],
+        )
+    attempts, submit_trace = await Submitter().submit(
+        target_url=target,
+        items=items,
+        matches=matches,
+        min_confidence=args.min_confidence,
+        max_retries=args.max_retries,
+        headed=args.headed,
+        dry_run=args.dry_run,
+    )
+    trace.extend(submit_trace)
+    final_items = items
+    if not args.dry_run:
+        final_items, reread_trace = await _inspect_state(target, headed=args.headed, courses=[])
+        trace.extend(reread_trace)
+    report = build_report(items=final_items, matches=matches, attempts=attempts, trace=trace)
+    report["command"] = "submit"
+    report["message"] = "Structured submit stage completed."
+    report["data"] = {
+        "items": [item.to_dict() for item in final_items],
+        "matches": [item.to_dict() for item in matches],
+        "attempts": [item.to_dict() for item in attempts],
+    }
+    report["exit_code"] = exit_code_for_report(report)
+    return report
+
+
+async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
+    if args.input:
+        payload = _load_json_file(args.input)
+        if {"summary", "trace", "metrics"} <= set(payload):
+            payload["command"] = "report"
+            payload["message"] = "Existing report artifact loaded."
+            payload["exit_code"] = exit_code_for_report(payload)
+            return payload
+        items = [_item_from_dict(item) for item in payload.get("items", [])]
+        matches = [_match_from_dict(item) for item in payload.get("matches", [])]
+        attempts = [_attempt_from_dict(item) for item in payload.get("attempts", [])]
+        trace = [_event_from_dict(item) for item in payload.get("trace", [])]
+        report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
+        report["command"] = "report"
+        report["message"] = "Structured report generated from artifact."
+        report["exit_code"] = exit_code_for_report(report)
+        return report
+
+    target = _require_target(args.target)
+    items, candidates, matches, trace = await _pipeline_match(
+        target=target,
+        headed=args.headed,
+        sources=_requested_sources(args.source, _default_sources()),
+        week=args.week,
+        courses=args.course,
+    )
+    report = build_report(items=items, matches=matches, attempts=[], trace=trace)
+    report["command"] = "report"
+    report["message"] = "Structured report generated."
+    report["data"] = {
+        "items": [item.to_dict() for item in items],
+        "candidates": [item.to_dict() for item in candidates],
+        "matches": [item.to_dict() for item in matches],
+    }
+    report["exit_code"] = exit_code_for_report(report)
+    return report
+
+
+def _handle_doctor() -> dict[str, Any]:
+    payload = SessionManager().doctor_payload()
+    return {
+        "status": "ok",
+        "command": "doctor",
+        "message": "Dependency checks completed.",
         "data": payload,
+        "exit_code": 0 if payload["ready"] else 1,
     }
 
 
@@ -157,92 +472,44 @@ def _handle_resolve(args: argparse.Namespace) -> dict[str, Any]:
     entries = load_submission_plan(Path(args.plan))
     summary = plan_summary(entries)
     if args.output:
-        output_path = Path(args.output)
-        output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        Path(args.output).write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return {
         "status": "ok",
         "command": "resolve",
         "message": "Submission plan normalized.",
         "data": summary,
-    }
-
-
-def _run_submit_weeks(weeks: list[int], *, dry_run: bool) -> list[dict[str, Any]]:
-    from core.submit import run_submit
-
-    results: list[dict[str, Any]] = []
-    original_week = os.environ.get("WEEK_NUMBER")
-    try:
-        for week in weeks:
-            os.environ["WEEK_NUMBER"] = str(week)
-            summary = asyncio.run(run_submit(dry_run=dry_run, target_email=None))
-            results.append({"week": week, "summary": summary})
-    finally:
-        if original_week is None:
-            os.environ.pop("WEEK_NUMBER", None)
-        else:
-            os.environ["WEEK_NUMBER"] = original_week
-    return results
-
-
-def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
-    portal_url = _require_url(args.portal_url)
-    entries = load_submission_plan(Path(args.plan))
-    summary = plan_summary(entries)
-    written_files = materialize_plan(entries)
-
-    if args.headed:
-        os.environ["HEADLESS"] = "0"
-
-    if not args.dry_run:
-        okta = OktaClient()
-        cookie_result = okta.cookies(url=portal_url)
-        storage_info = write_storage_state_from_okta(
-            cookie_result.payload,
-            url=portal_url,
-            output_path=storage_state_file(),
-        )
-    else:
-        storage_info = {
-            "path": str(storage_state_file()),
-            "cookie_count": 0,
-            "skipped": True,
-        }
-
-    submit_runs = _run_submit_weeks(summary["weeks"], dry_run=args.dry_run)
-    return {
-        "status": "ok",
-        "command": "submit",
-        "message": "Submission workflow executed.",
-        "data": {
-            "plan": summary,
-            "written_files": written_files,
-            "storage_state": storage_info,
-            "runs": submit_runs,
-        },
+        "exit_code": 0,
     }
 
 
 def main(argv: list[str]) -> int:
-    """Execute an agent-first CLI command."""
+    """Execute an AI-native CLI command."""
     parser = build_agent_parser()
     args = parser.parse_args(argv)
     json_output = bool(getattr(args, "json", False))
-
     try:
         if args.command == "auth":
             payload = _handle_auth(args)
+        elif args.command == "doctor":
+            payload = _handle_doctor()
+        elif args.command == "inspect":
+            payload = asyncio.run(_handle_inspect(args))
         elif args.command == "fetch":
-            payload = _handle_fetch(args)
+            payload = asyncio.run(_handle_fetch(args))
+        elif args.command == "match":
+            payload = asyncio.run(_handle_match(args))
+        elif args.command == "submit":
+            payload = asyncio.run(_handle_submit(args))
+        elif args.command == "report":
+            payload = asyncio.run(_handle_report(args))
         elif args.command == "resolve":
             payload = _handle_resolve(args)
         else:
-            payload = _handle_submit(args)
-    except (OktaCliError, SourceCommandError, SubmissionPlanError) as exc:
-        payload = {
-            "status": "error",
-            "command": f"{args.command}",
-            "error": str(exc),
-        }
-
+            payload = asyncio.run(_pipeline_run(args))
+    except AgentCliInputError as exc:
+        payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 2}
+    except OktaCliError as exc:
+        payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 3}
+    except (SourceCommandError, SubmissionPlanError) as exc:
+        payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 1}
     return _emit(payload, json_output=json_output)

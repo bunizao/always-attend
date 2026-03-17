@@ -12,7 +12,7 @@ from utils.bootstrap import BootstrapError, ensure_runtime_ready
 
 
 def _is_agent_command(argv: list[str]) -> bool:
-    return bool(argv) and argv[0] in {"auth", "fetch", "resolve", "submit"}
+    return bool(argv) and argv[0] in {"run", "doctor", "auth", "inspect", "fetch", "match", "submit", "report", "resolve"}
 
 
 def _is_non_runtime_command(argv: list[str]) -> bool:
