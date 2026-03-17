@@ -80,6 +80,7 @@ def artifact_from_payload(
     command: list[str],
     payload: Any,
     requested_courses: set[str],
+    requested_week: int | None = None,
 ) -> SourceArtifact:
     """Build a handoff artifact from a source payload."""
     return build_source_artifact(
@@ -87,4 +88,5 @@ def artifact_from_payload(
         command=command,
         payload=payload,
         requested_courses=requested_courses,
+        requested_week=requested_week,
     )

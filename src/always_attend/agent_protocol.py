@@ -83,6 +83,9 @@ class SourceArtifact:
     source: str
     command: list[str]
     course_codes: list[str]
+    week_hints: list[int]
+    group_hints: list[str]
+    artifact_kind: str
     image_urls: list[str]
     text_snippets: list[str]
     notes: list[str]

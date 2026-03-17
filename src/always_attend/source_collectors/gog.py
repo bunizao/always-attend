@@ -41,5 +41,6 @@ def collect_gog_candidates(
         command=[executable, "--json"],
         payload=payload,
         requested_courses=courses,
+        requested_week=week,
     )
     return candidates, parse_trace, [artifact]

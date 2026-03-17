@@ -56,5 +56,6 @@ def collect_gmail_candidates(
         command=command,
         payload=payload,
         requested_courses=courses,
+        requested_week=week,
     )
     return candidates, trace + parse_trace, [artifact]

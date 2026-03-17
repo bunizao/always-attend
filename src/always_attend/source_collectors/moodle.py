@@ -86,6 +86,7 @@ def collect_moodle_candidates(
                     command=command,
                     payload=payload,
                     requested_courses=courses,
+                    requested_week=week,
                 )
             )
 
@@ -105,6 +106,7 @@ def collect_moodle_candidates(
                 command=[executable, "overview", "--json"],
                 payload=overview_payload,
                 requested_courses=courses,
+                requested_week=week,
             )
         )
     else:

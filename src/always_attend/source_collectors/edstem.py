@@ -86,6 +86,7 @@ def collect_edstem_candidates(
                     command=command,
                     payload=payload,
                     requested_courses=courses,
+                    requested_week=week,
                 )
             )
     return candidates, trace, artifacts
