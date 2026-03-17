@@ -28,6 +28,7 @@ class DependencyStatus:
     status: str
     details: str
     install_hint: str | None = None
+    optional: bool = False
 
     def to_dict(self) -> dict[str, str | None]:
         """Return a JSON-friendly dependency status."""
@@ -36,6 +37,7 @@ class DependencyStatus:
             "status": self.status,
             "details": self.details,
             "install_hint": self.install_hint,
+            "optional": self.optional,
         }
 
 
@@ -101,13 +103,15 @@ class SessionManager:
             self._command_status("moodle-cli", ("moodle-cli", "moodle")),
             self._command_status("edstem", ("edstem-cli", "edstem")),
             self._command_status("gogcli", ("gogcli", "gog")),
-            self._python_module_status("pyyaml", "yaml"),
         ]
 
     def doctor_payload(self) -> dict[str, Any]:
         """Return machine-readable dependency health with aggregate status."""
         checks = [item.to_dict() for item in self.doctor()]
-        all_ok = all(item["status"] == "ok" for item in checks)
+        all_ok = all(
+            item["status"] == "ok" or bool(item.get("optional"))
+            for item in checks
+        )
         return {
             "checks": checks,
             "ready": all_ok,
@@ -131,6 +135,7 @@ class SessionManager:
             status="missing",
             details=f"Tried: {', '.join(commands)}",
             install_hint=_install_hint_for(name),
+            optional=(name == "gogcli"),
         )
 
     @staticmethod

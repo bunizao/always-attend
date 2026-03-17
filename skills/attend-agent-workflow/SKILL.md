@@ -48,6 +48,14 @@ Run:
 PYTHONPATH=src python -m always_attend handoff --target <attendance-url> --json
 ```
 
+If you do not have a live session yet, use:
+
+```bash
+PYTHONPATH=src python -m always_attend handoff --demo --json
+```
+
+That command returns a schema-valid demo payload so the workflow can still be validated end to end.
+
 The handoff payload contains:
 
 - `open_items`: attendance-site items that are actually fillable
