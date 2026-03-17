@@ -863,7 +863,7 @@ async def collect_day_anchors(page: Page, base: str, start_monday: Optional[date
         logger.warning(f"Failed to collect day anchors: {e}")
         return []
 
-async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> None:
+async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> dict:
     """Main submission logic."""
     
     load_env(str(default_env_file()))
@@ -872,7 +872,15 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     portal_url = os.getenv("PORTAL_URL")
     if not portal_url:
         logger.error("PORTAL_URL not set in environment")
-        return
+        return {
+            "success": False,
+            "error": "PORTAL_URL not set in environment",
+            "courses_processed": [],
+            "codes_submitted": {},
+            "errors": ["PORTAL_URL not set in environment"],
+            "attempts": {},
+            "success_codes": {},
+        }
 
     sync_codes_database()
 
@@ -960,13 +968,29 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             
             if not await is_authenticated(page):
                 logger.error("Not authenticated. Please run login first.")
-                return
+                return {
+                    "success": False,
+                    "error": "Not authenticated. Please run login first.",
+                    "courses_processed": [],
+                    "codes_submitted": {},
+                    "errors": ["Not authenticated. Please run login first."],
+                    "attempts": {},
+                    "success_codes": {},
+                }
             
             # Scrape enrolled courses
             enrolled_courses = await scrape_enrolled_courses(page, base_url)
             if not enrolled_courses:
                 logger.error("No enrolled courses found")
-                return
+                return {
+                    "success": False,
+                    "error": "No enrolled courses found",
+                    "courses_processed": [],
+                    "codes_submitted": {},
+                    "errors": ["No enrolled courses found"],
+                    "attempts": {},
+                    "success_codes": {},
+                }
             
             await page.goto(f"{base_url}/student/Units.aspx")
             
@@ -1186,6 +1210,14 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
                 )
             except Exception:
                 pass
+            return {
+                "success": overall_success,
+                "courses_processed": courses_processed,
+                "codes_submitted": codes_submitted,
+                "errors": errors,
+                "attempts": course_attempts,
+                "success_codes": course_success_codes,
+            }
         
         finally:
             if progress_tracker:

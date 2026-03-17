@@ -5,9 +5,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from always_attend.agent_cli import main as agent_main
 from always_attend.argv import normalize_cli_argv
 from always_attend.runtime_contract import get_runtime_paths_dict, get_runtime_paths_json
 from utils.bootstrap import BootstrapError, ensure_runtime_ready
+
+
+def _is_agent_command(argv: list[str]) -> bool:
+    return bool(argv) and argv[0] in {"auth", "fetch", "resolve", "submit"}
 
 
 def _is_non_runtime_command(argv: list[str]) -> bool:
@@ -54,6 +59,9 @@ def main() -> None:
     raw_argv = sys.argv[1:]
     if _handle_builtin_command(raw_argv):
         return
+
+    if _is_agent_command(raw_argv):
+        raise SystemExit(agent_main(raw_argv))
 
     normalized_argv = normalize_cli_argv(raw_argv)
 

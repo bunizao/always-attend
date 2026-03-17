@@ -6,6 +6,10 @@ from __future__ import annotations
 CLI_EXAMPLES = (
     "Examples:\n"
     "  attend\n"
+    "  attend auth login https://attendance.example.edu --json\n"
+    "  attend fetch --source edstem --course FIT2099 --kind threads --json\n"
+    "  attend resolve --plan plan.json --json\n"
+    "  attend submit --plan plan.json --json\n"
     "  attend stats\n"
     "  attend login\n"
     "  attend paths --json\n"

@@ -76,6 +76,13 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("app_data_dir", payload)
         self.assertIn("codes_db_path", payload)
 
+    def test_agent_auth_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "auth", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("login", result.stdout)
+        self.assertIn("check", result.stdout)
+        self.assertIn("cookies", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
