@@ -12,6 +12,7 @@ class _WeightedScore:
     total: float
     matched_fields: list[str]
     conflicting_fields: list[str]
+    missing_fields: list[str]
 
 
 WEIGHTS = {
@@ -23,12 +24,18 @@ WEIGHTS = {
 }
 
 
-def _compare_field(name: str, item_value: str | None, candidate_value: str | None) -> tuple[float, bool, bool]:
-    if not item_value or not candidate_value:
-        return 0.0, False, False
+def _compare_field(name: str, item_value: str | None, candidate_value: str | None) -> tuple[float, bool, bool, bool]:
+    if not item_value and not candidate_value:
+        return 0.0, False, False, False
+    if item_value and not candidate_value:
+        if name == "group":
+            return -WEIGHTS[name] * 0.35, False, False, True
+        return 0.0, False, False, True
+    if candidate_value and not item_value:
+        return 0.0, False, False, False
     if item_value.strip().lower() == candidate_value.strip().lower():
-        return WEIGHTS[name], True, False
-    return -WEIGHTS[name] * 0.75, False, True
+        return WEIGHTS[name], True, False, False
+    return -WEIGHTS[name] * 0.75, False, True, False
 
 
 def score_candidate(item: AttendanceStateItem, candidate: CandidateRecord) -> _WeightedScore:
@@ -36,9 +43,10 @@ def score_candidate(item: AttendanceStateItem, candidate: CandidateRecord) -> _W
     total = 0.0
     matched_fields: list[str] = []
     conflicting_fields: list[str] = []
+    missing_fields: list[str] = []
 
     for field_name in WEIGHTS:
-        points, matched, conflicting = _compare_field(
+        points, matched, conflicting, missing = _compare_field(
             field_name,
             getattr(item, field_name),
             getattr(candidate, field_name),
@@ -48,6 +56,10 @@ def score_candidate(item: AttendanceStateItem, candidate: CandidateRecord) -> _W
             matched_fields.append(field_name)
         if conflicting:
             conflicting_fields.append(field_name)
+        if missing:
+            missing_fields.append(field_name)
+            if field_name == "group":
+                conflicting_fields.append(field_name)
 
     if not candidate.course_code or candidate.course_code != item.course_code:
         conflicting_fields.append("course_code")
@@ -58,6 +70,7 @@ def score_candidate(item: AttendanceStateItem, candidate: CandidateRecord) -> _W
         total=normalized,
         matched_fields=matched_fields,
         conflicting_fields=sorted(set(conflicting_fields)),
+        missing_fields=sorted(set(missing_fields)),
     )
 
 
@@ -90,11 +103,15 @@ def choose_best_match(item: AttendanceStateItem, candidates: list[CandidateRecor
     ranked.sort(key=lambda item_pair: item_pair[0].total, reverse=True)
     top_score, top_candidate = ranked[0]
     ambiguous = len(ranked) > 1 and abs(top_score.total - ranked[1][0].total) <= 0.05
-    reason = (
-        "Candidate is ambiguous with another near-identical match."
-        if ambiguous
-        else "Best structured candidate chosen by five-field match."
-    )
+    hard_conflicts = [field for field in top_score.conflicting_fields if field not in top_score.missing_fields]
+    if ambiguous:
+        reason = "Candidate is ambiguous with another near-identical match."
+    elif top_score.missing_fields and not hard_conflicts:
+        reason = f"Candidate is missing fields: {', '.join(top_score.missing_fields)}."
+    elif top_score.conflicting_fields:
+        reason = f"Candidate has conflicting fields: {', '.join(top_score.conflicting_fields)}."
+    else:
+        reason = "Best structured candidate chosen by five-field match."
     return MatchResult(
         item_id=item.item_id,
         course_code=item.course_code,
