@@ -57,7 +57,6 @@ class AgentCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             plan_path = temp_root / "plan.json"
-            codes_root = temp_root / "codes"
             plan_path.write_text(
                 json.dumps(
                     [
@@ -68,7 +67,10 @@ class AgentCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch("always_attend.submission_plan.codes_db_path", return_value=codes_root):
+            with patch(
+                "always_attend.agent_cli.materialize_plan",
+                return_value=[str(temp_root / "codes" / "FIT2099" / "7.json")],
+            ):
                 exit_code, payload = self.run_agent_command(
                     [
                         "submit",
@@ -81,7 +83,42 @@ class AgentCliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["data"]["plan"]["entry_count"], 2)
-            self.assertTrue((codes_root / "FIT2099" / "7.json").exists())
+            self.assertEqual(len(payload["data"]["written_files"]), 1)
+
+    def test_submit_plan_with_target_executes_submission_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            plan_path = temp_root / "plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    [
+                        {"course_code": "FIT2099", "week": 7, "slot": "Workshop 01", "code": "AAA11"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch(
+                "always_attend.agent_cli.materialize_plan",
+                return_value=[str(temp_root / "codes" / "FIT2099" / "7.json")],
+            ), patch(
+                "always_attend.agent_cli._run_submit_weeks",
+                return_value=[{"week": 7, "summary": {"success": True}}],
+            ) as mock_run_submit:
+                exit_code, payload = self.run_agent_command(
+                    [
+                        "submit",
+                        "--plan",
+                        str(plan_path),
+                        "--target",
+                        "http://127.0.0.1:8081/student/",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["data"]["runs"][0]["summary"]["success"], True)
+        mock_run_submit.assert_called_once()
 
     def test_doctor_command_reports_status(self) -> None:
         with patch(
@@ -204,6 +241,12 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["data"]["candidates"][0]["source"], "edstem")
 
+    def test_requested_sources_preserve_explicit_attendance_only(self) -> None:
+        from always_attend.agent_cli import _requested_sources
+
+        self.assertEqual(_requested_sources(csv_text="attendance"), [])
+        self.assertEqual(_requested_sources(explicit_sources=["attendance"]), [])
+
     def test_handoff_command_returns_artifacts(self) -> None:
         async_payload = {
             "status": "ok",
@@ -247,6 +290,19 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "handoff")
         self.assertEqual(payload["next_action"], "auth_login")
         self.assertIn("attend auth login", payload["suggested_command"])
+
+    def test_inspect_local_target_skips_session_bootstrap(self) -> None:
+        with patch("always_attend.agent_cli.SessionManager.ensure_storage_state") as mock_ensure, patch(
+            "always_attend.agent_cli.AttendanceStateReader.inspect",
+            new=AsyncMock(return_value=([], [])),
+        ):
+            exit_code, payload = self.run_agent_command(
+                ["inspect", "state", "--target", "http://127.0.0.1:8081/student/", "--json"]
+            )
+
+        self.assertEqual(exit_code, 4)
+        mock_ensure.assert_not_called()
+        self.assertEqual(payload["command"], "inspect.state")
 
     def test_build_playwright_storage_state_accepts_cookie_header(self) -> None:
         payload = build_playwright_storage_state(

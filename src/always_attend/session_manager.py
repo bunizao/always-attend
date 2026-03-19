@@ -9,6 +9,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from always_attend.okta_client import (
     OktaCliError,
@@ -49,11 +50,19 @@ class SessionManager:
 
     def ensure_storage_state(self, target_url: str) -> dict[str, Any]:
         """Persist a Playwright storage_state file for the target URL."""
+        if not self.requires_okta_session(target_url):
+            return {
+                "path": str(storage_state_file()),
+                "cookie_count": 0,
+                "skipped": True,
+            }
         payload = self._okta.cookies(url=target_url).payload
         return write_storage_state_from_okta(payload, url=target_url, output_path=storage_state_file())
 
     def check_okta_session(self, target_url: str, timeout_ms: int = 30000) -> dict[str, Any]:
         """Verify that an Okta-backed session is available for the target."""
+        if not self.requires_okta_session(target_url):
+            return {"ok": True, "skipped": True}
         return self._okta.check(url=target_url, timeout_ms=timeout_ms).payload
 
     def build_source_environment(self, source: str, target_url: str) -> dict[str, str]:
@@ -61,6 +70,8 @@ class SessionManager:
         env = os.environ.copy()
         session_url = self._source_session_url(source, target_url)
         if not session_url:
+            return env
+        if not self.requires_okta_session(session_url):
             return env
 
         try:
@@ -116,6 +127,19 @@ class SessionManager:
             "checks": checks,
             "ready": all_ok,
         }
+
+    @staticmethod
+    def requires_okta_session(target_url: str) -> bool:
+        """Return whether a target should use Okta-backed session bootstrapping."""
+        parsed = urlparse((target_url or "").strip())
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme == "file":
+            return False
+        if host in {"127.0.0.1", "localhost"}:
+            return False
+        if host.endswith(".local"):
+            return False
+        return True
 
     @staticmethod
     def _source_session_url(source: str, target_url: str) -> str:

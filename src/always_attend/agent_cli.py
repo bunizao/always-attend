@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import io
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -165,12 +168,16 @@ def _require_target(target: str) -> str:
 
 def _parse_sources(csv_text: str | None, explicit_sources: list[str] | None = None) -> list[str]:
     if explicit_sources:
-        return [item.lower() for item in explicit_sources if item]
+        return [item.lower() for item in explicit_sources if item and item.lower() != "attendance"]
     values = [item.strip().lower() for item in (csv_text or "").split(",")]
     return [item for item in values if item and item != "attendance"]
 
 
 def _requested_sources(explicit_sources: list[str] | None = None, csv_text: str | None = None) -> list[str]:
+    if explicit_sources is not None:
+        return _parse_sources(None, explicit_sources)
+    if csv_text is not None:
+        return _parse_sources(csv_text)
     sources = _parse_sources(csv_text, explicit_sources)
     if sources:
         return sources
@@ -195,6 +202,43 @@ def _event_from_dict(payload: dict[str, Any]) -> TraceEvent:
 
 def _load_json_file(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+async def _run_submit_weeks(
+    weeks: list[int],
+    *,
+    dry_run: bool,
+    target_url: str,
+    codes_root: Path,
+) -> list[dict[str, Any]]:
+    from core.submit import run_submit
+
+    results: list[dict[str, Any]] = []
+    original_week = os.environ.get("WEEK_NUMBER")
+    original_target = os.environ.get("PORTAL_URL")
+    original_codes = os.environ.get("CODES_DB_PATH")
+    try:
+        os.environ["PORTAL_URL"] = target_url
+        os.environ["CODES_DB_PATH"] = str(codes_root)
+        for week in weeks:
+            os.environ["WEEK_NUMBER"] = str(week)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                summary = await run_submit(dry_run=dry_run, target_email=None)
+            results.append({"week": week, "summary": summary})
+    finally:
+        if original_week is None:
+            os.environ.pop("WEEK_NUMBER", None)
+        else:
+            os.environ["WEEK_NUMBER"] = original_week
+        if original_target is None:
+            os.environ.pop("PORTAL_URL", None)
+        else:
+            os.environ["PORTAL_URL"] = original_target
+        if original_codes is None:
+            os.environ.pop("CODES_DB_PATH", None)
+        else:
+            os.environ["CODES_DB_PATH"] = original_codes
+    return results
 
 
 def _session_missing_payload(command: str, target: str, error: str) -> dict[str, Any]:
@@ -349,7 +393,8 @@ def _demo_attempts() -> list[SubmissionAttempt]:
 
 async def _inspect_state(target: str, *, headed: bool, courses: list[str]) -> tuple[list[AttendanceStateItem], list[TraceEvent]]:
     session_manager = SessionManager()
-    session_manager.ensure_storage_state(target)
+    if session_manager.requires_okta_session(target):
+        session_manager.ensure_storage_state(target)
     return await AttendanceStateReader().inspect(
         target_url=target,
         headed=headed,
@@ -658,17 +703,42 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
     if args.plan:
         entries = load_submission_plan(Path(args.plan))
         summary = plan_summary(entries)
-        written_files = materialize_plan(entries)
-        return {
-            "status": "ok",
-            "command": "submit",
-            "message": "Legacy plan materialized for submission.",
-            "data": {
+        with tempfile.TemporaryDirectory(prefix="always-attend-plan-") as temp_dir:
+            temp_root = Path(temp_dir)
+            codes_root = temp_root / "codes"
+            original_codes = os.environ.get("CODES_DB_PATH")
+            try:
+                os.environ["CODES_DB_PATH"] = str(codes_root)
+                written_files = materialize_plan(entries)
+            finally:
+                if original_codes is None:
+                    os.environ.pop("CODES_DB_PATH", None)
+                else:
+                    os.environ["CODES_DB_PATH"] = original_codes
+
+            data = {
                 "plan": summary,
                 "written_files": written_files,
-            },
-            "exit_code": 0,
-        }
+            }
+            target = (args.target or "").strip()
+            if target:
+                runs = await _run_submit_weeks(
+                    summary["weeks"],
+                    dry_run=args.dry_run,
+                    target_url=target,
+                    codes_root=codes_root,
+                )
+                data["runs"] = runs
+                message = "Structured submit executed from plan."
+            else:
+                message = "Legacy plan materialized for submission."
+            return {
+                "status": "ok",
+                "command": "submit",
+                "message": message,
+                "data": data,
+                "exit_code": 0,
+            }
 
     target = _require_target(args.target)
     if args.input:
