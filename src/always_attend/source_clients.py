@@ -10,7 +10,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
-from always_attend.okta_client import OktaCliError, OktaClient, build_cookie_header, extract_cookie_items
+from always_attend.session_manager import SessionManager
 
 
 class SourceCommandError(RuntimeError):
@@ -62,28 +62,10 @@ def _extract_course_code(value: str) -> str | None:
 
 
 def _build_source_env(request: SourceRequest) -> dict[str, str]:
-    env = os.environ.copy()
     session_url = (request.url or os.getenv("SOURCE_OKTA_URL") or os.getenv("PORTAL_URL", "")).strip()
     if not session_url:
-        return env
-
-    try:
-        cookies_payload = OktaClient().cookies(url=session_url).payload
-    except OktaCliError:
-        return env
-
-    cookie_items = extract_cookie_items(cookies_payload)
-    if not cookie_items:
-        return env
-
-    env["ALWAYS_ATTEND_OKTA_URL"] = session_url
-    env["ALWAYS_ATTEND_OKTA_COOKIES_JSON"] = json.dumps(cookie_items)
-    env["OKTA_COOKIES_JSON"] = env["ALWAYS_ATTEND_OKTA_COOKIES_JSON"]
-    cookie_header = build_cookie_header(cookies_payload)
-    if cookie_header:
-        env["ALWAYS_ATTEND_OKTA_COOKIE_HEADER"] = cookie_header
-        env["OKTA_COOKIE_HEADER"] = cookie_header
-    return env
+        return os.environ.copy()
+    return SessionManager().build_source_environment(request.source, session_url)
 
 
 class EdstemAdapter:

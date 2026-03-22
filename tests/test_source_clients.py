@@ -20,11 +20,15 @@ class SourceClientTests(unittest.TestCase):
             return subprocess.CompletedProcess(args=["dummy"], returncode=0, stdout=json.dumps({"ok": True}), stderr="")
 
         with patch("always_attend.source_clients.shutil.which", return_value="/usr/bin/dummy"), patch(
-            "always_attend.source_clients.OktaClient"
-        ) as mock_okta, patch("always_attend.source_clients.subprocess.run", side_effect=fake_run):
-            mock_okta.return_value.cookies.return_value.payload = {
-                "cookie_header": "sid=abc123; csrftoken=def456"
-            }
+            "always_attend.source_clients.SessionManager.build_source_environment",
+            return_value={
+                "ALWAYS_ATTEND_OKTA_URL": "https://attendance.example.test",
+                "OKTA_COOKIE_HEADER": "sid=abc123; csrftoken=def456",
+                "ALWAYS_ATTEND_OKTA_COOKIE_HEADER": "sid=abc123; csrftoken=def456",
+                "ALWAYS_ATTEND_OKTA_COOKIES_JSON": '[{"name":"sid","value":"abc123"}]',
+                "OKTA_COOKIES_JSON": '[{"name":"sid","value":"abc123"}]',
+            },
+        ), patch("always_attend.source_clients.subprocess.run", side_effect=fake_run):
             payload = GenericJsonCliAdapter(
                 source="moodle",
                 executable_names=("moodle-cli",),
