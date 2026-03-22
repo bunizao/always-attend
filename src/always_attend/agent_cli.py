@@ -17,7 +17,7 @@ from always_attend.agent_protocol import AttendanceStateItem, CandidateRecord, M
 from always_attend.attendance_state_reader import AttendanceStateReader
 from always_attend.matcher import match_open_items
 from always_attend.okta_client import OktaCliError, OktaClient
-from always_attend.paths import env_file as runtime_env_file, storage_state_file
+from always_attend.paths import env_file as runtime_env_file
 from always_attend.reporter import build_report, exit_code_for_report
 from always_attend.session_manager import SessionManager
 from always_attend.skill_installer import (
@@ -566,8 +566,9 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
 
 def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
     target, persisted_target = _require_and_persist_target(args.url)
+    session_manager = SessionManager()
     if args.auth_command == "login":
-        browser_import = asyncio.run(_try_browser_cookie_import(target, timeout_ms=args.timeout_ms))
+        browser_import = asyncio.run(session_manager.import_browser_session(target, timeout_ms=args.timeout_ms))
         auth_flow: dict[str, Any] = {
             "browser_cookie_import": browser_import,
             "interactive_login": None,
@@ -618,8 +619,7 @@ def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
             "exit_code": 0,
         }
 
-    okta = OktaClient()
-    result = okta.check(url=target, timeout_ms=args.timeout_ms)
+    result = session_manager.check_okta_session(target, timeout_ms=args.timeout_ms)
     return {
         "status": "ok",
         "command": "auth.check",
@@ -628,7 +628,7 @@ def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
         "data": {
             "target": target,
             "target_config": persisted_target,
-            "session": result.payload,
+            "session": result,
         },
         "exit_code": 0,
     }
@@ -1056,39 +1056,3 @@ def main(argv: list[str]) -> int:
     except (SourceCommandError, SubmissionPlanError, SkillInstallError) as exc:
         payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 1}
     return _emit(payload, json_output=json_output)
-
-
-async def _try_browser_cookie_import(target: str, *, timeout_ms: int) -> dict[str, Any]:
-    from core.login import LoginConfig, LoginWorkflow
-
-    workflow = LoginWorkflow(
-        LoginConfig(
-            portal_url=target,
-            headed=False,
-            storage_state=str(storage_state_file()),
-            import_browser_session=True,
-            auto_login_enabled=False,
-            timeout_ms=timeout_ms,
-            login_check_timeout_ms=timeout_ms,
-        )
-    )
-    try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            imported = await workflow._import_session_from_system_browser()
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "mode": "browser_cookie_import",
-            "reason": str(exc),
-        }
-    if imported:
-        return {
-            "status": "ok",
-            "mode": "browser_cookie_import",
-            "storage_state": str(storage_state_file()),
-        }
-    return {
-        "status": "failed",
-        "mode": "browser_cookie_import",
-        "reason": "No reusable browser session was found.",
-    }

@@ -384,7 +384,7 @@ class AgentCliTests(unittest.TestCase):
             {"ENV_FILE": str(Path(temp_dir) / ".env")},
             clear=True,
         ), patch(
-            "always_attend.agent_cli._try_browser_cookie_import",
+            "always_attend.agent_cli.SessionManager.import_browser_session",
             new=AsyncMock(return_value={"status": "ok", "mode": "browser_cookie_import"}),
         ), patch("always_attend.agent_cli.OktaClient") as mock_okta:
             exit_code, payload = self.run_agent_command(
@@ -408,7 +408,7 @@ class AgentCliTests(unittest.TestCase):
             {"ENV_FILE": str(Path(temp_dir) / ".env")},
             clear=True,
         ), patch(
-            "always_attend.agent_cli._try_browser_cookie_import",
+            "always_attend.agent_cli.SessionManager.import_browser_session",
             new=AsyncMock(return_value={"status": "failed", "mode": "browser_cookie_import", "reason": "missing"}),
         ), patch("always_attend.agent_cli.OktaClient") as mock_okta:
             mock_okta.return_value.login.return_value.payload = {"ok": True}

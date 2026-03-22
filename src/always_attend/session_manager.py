@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -75,6 +77,42 @@ class SessionManager:
         if not self.requires_okta_session(target_url):
             return {"ok": True, "skipped": True}
         return self._okta.check(url=target_url, timeout_ms=timeout_ms).payload
+
+    async def import_browser_session(self, target_url: str, timeout_ms: int = 60000) -> dict[str, Any]:
+        """Import cookies from a local browser profile into Playwright storage_state."""
+        from core.login import LoginConfig, LoginWorkflow
+
+        workflow = LoginWorkflow(
+            LoginConfig(
+                portal_url=target_url,
+                headed=False,
+                storage_state=str(storage_state_file()),
+                import_browser_session=True,
+                auto_login_enabled=False,
+                timeout_ms=timeout_ms,
+                login_check_timeout_ms=timeout_ms,
+            )
+        )
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                imported = await workflow._import_session_from_system_browser()
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "mode": "browser_cookie_import",
+                "reason": str(exc),
+            }
+        if imported:
+            return {
+                "status": "ok",
+                "mode": "browser_cookie_import",
+                "storage_state": str(storage_state_file()),
+            }
+        return {
+            "status": "failed",
+            "mode": "browser_cookie_import",
+            "reason": "No reusable browser session was found.",
+        }
 
     def build_source_environment(self, source: str, target_url: str) -> dict[str, str]:
         """Build a source-specific environment with shared Okta session data."""
