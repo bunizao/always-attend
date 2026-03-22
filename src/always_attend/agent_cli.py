@@ -17,6 +17,8 @@ from always_attend.agent_protocol import AttendanceStateItem, CandidateRecord, M
 from always_attend.attendance_state_reader import AttendanceStateReader
 from always_attend.matcher import match_open_items
 from always_attend.okta_client import OktaCliError, OktaClient
+from urllib.parse import urlparse
+
 from always_attend.paths import env_file as runtime_env_file
 from always_attend.reporter import build_report, exit_code_for_report
 from always_attend.session_manager import SessionManager
@@ -83,6 +85,17 @@ def build_agent_parser() -> argparse.ArgumentParser:
     auth_check.add_argument("url", nargs="?", default=_default_target())
     auth_check.add_argument("--timeout-ms", type=int, default=30000)
     auth_check.add_argument("--json", action="store_true")
+
+    config_parser = subparsers.add_parser("config", help="Read or update persisted agent configuration.")
+    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+
+    config_get = config_subparsers.add_parser("get", help="Read persisted configuration values.")
+    config_get.add_argument("--json", action="store_true")
+
+    config_set = config_subparsers.add_parser("set", help="Persist configuration values explicitly.")
+    config_set.add_argument("--target", required=True)
+    config_set.add_argument("--allow-local-target", action="store_true")
+    config_set.add_argument("--json", action="store_true")
 
     inspect_parser = subparsers.add_parser("inspect", help="Inspect runtime state from the attendance site.")
     inspect_subparsers = inspect_parser.add_subparsers(dest="inspect_command", required=True)
@@ -213,9 +226,30 @@ def _persist_target_url(target: str) -> dict[str, Any]:
     }
 
 
-def _require_and_persist_target(target: str) -> tuple[str, dict[str, Any]]:
+def _configured_target_payload() -> dict[str, Any]:
+    return {
+        "key": "PORTAL_URL",
+        "value": (os.getenv("PORTAL_URL", "") or "").strip() or None,
+        "env_file": str(runtime_env_file()),
+        "configured": bool((os.getenv("PORTAL_URL", "") or "").strip()),
+    }
+
+
+def _is_local_target(target: str) -> bool:
+    parsed = urlparse(target.strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "file":
+        return True
+    return host in {"127.0.0.1", "localhost"} or host.endswith(".local")
+
+
+def _validate_persistable_target(target: str, *, allow_local_target: bool) -> str:
     value = _require_target(target)
-    return value, _persist_target_url(value)
+    if _is_local_target(value) and not allow_local_target:
+        raise AgentCliInputError(
+            "Refusing to persist a local attendance URL. Pass --allow-local-target to override."
+        )
+    return value
 
 
 def _target_required_payload(command: str) -> dict[str, Any]:
@@ -224,10 +258,11 @@ def _target_required_payload(command: str) -> dict[str, Any]:
         "command": command,
         "error": "Missing target URL. Ask the user for the attendance base URL.",
         "message": "The attendance base URL is required before this command can run.",
-        "user_feedback": "Ask the user for the attendance base URL. The next successful command will save it to the persistent config automatically.",
+        "user_feedback": "Ask the user for the attendance base URL, then save it explicitly with the config command before retrying.",
         "next_action": "configure_target_url",
         "config_key": "PORTAL_URL",
         "config_path": str(runtime_env_file()),
+        "suggested_command": "attend config set --target <attendance-url> --json",
         "exit_code": 2,
     }
 
@@ -522,7 +557,7 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
         }
         report["exit_code"] = 0
         return report
-    target, persisted_target = _require_and_persist_target(args.target)
+    target = _require_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
@@ -553,7 +588,7 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
     report["command"] = "run"
     report["message"] = "AI-native attendance run completed."
     report["data"] = {
-        "target_config": persisted_target,
+        "target": target,
         "items": [item.to_dict() for item in final_items],
         "candidates": [item.to_dict() for item in candidates],
         "artifacts": [item.to_dict() for item in artifacts],
@@ -565,7 +600,7 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
-    target, persisted_target = _require_and_persist_target(args.url)
+    target = _require_target(args.url)
     session_manager = SessionManager()
     if args.auth_command == "login":
         browser_import = asyncio.run(session_manager.import_browser_session(target, timeout_ms=args.timeout_ms))
@@ -580,10 +615,9 @@ def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
                 "status": "ok",
                 "command": "auth.login",
                 "message": "Browser cookies were imported into the saved portal session.",
-                "user_feedback": "Saved the attendance URL and reused an existing browser session. The agent can continue without asking you to log in again.",
+                "user_feedback": "Reused an existing browser session. The agent can continue without asking you to log in again.",
                 "data": {
                     "target": target,
-                    "target_config": persisted_target,
                     "auth_flow": auth_flow,
                     "session_scope": "portal_storage_state",
                 },
@@ -609,10 +643,9 @@ def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
             "status": "ok",
             "command": "auth.login",
             "message": "Interactive login completed after browser cookie import was unavailable.",
-            "user_feedback": "Saved the attendance URL. A browser window was used for login, and the session is now refreshed.",
+            "user_feedback": "A browser window was used for login, and the session is now refreshed.",
             "data": {
                 "target": target,
-                "target_config": persisted_target,
                 "auth_flow": auth_flow,
                 "session_scope": "shared_okta_session",
             },
@@ -624,10 +657,9 @@ def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
         "status": "ok",
         "command": "auth.check",
         "message": "Okta session check completed.",
-        "user_feedback": "Checked the saved session for the configured attendance URL.",
+        "user_feedback": "Checked the current session for the requested attendance URL.",
         "data": {
             "target": target,
-            "target_config": persisted_target,
             "session": result,
         },
         "exit_code": 0,
@@ -647,14 +679,14 @@ async def _handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
             },
             "exit_code": 0,
         }
-    target, persisted_target = _require_and_persist_target(args.target)
+    target = _require_target(args.target)
     items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
     return {
         "status": "ok",
         "command": "inspect.state",
         "message": "Attendance site state loaded.",
         "data": {
-            "target_config": persisted_target,
+            "target": target,
             "items": [item.to_dict() for item in items],
             "trace": [item.to_dict() for item in trace],
         },
@@ -663,7 +695,7 @@ async def _handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
-    target, persisted_target = _require_and_persist_target(args.target)
+    target = _require_target(args.target)
     items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
     candidates, collect_trace, artifacts = collect_candidates_for_sources(
         items=items,
@@ -679,7 +711,7 @@ async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
         "command": "fetch",
         "message": "Source collection completed.",
         "data": {
-            "target_config": persisted_target,
+            "target": target,
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
             "artifacts": [item.to_dict() for item in artifacts],
@@ -692,7 +724,7 @@ async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
 async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
     if args.demo:
         return _demo_handoff_payload((args.target or "").strip())
-    target, persisted_target = _require_and_persist_target(args.target)
+    target = _require_target(args.target)
 
     try:
         items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
@@ -717,7 +749,6 @@ async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
         "message": "AI handoff package generated.",
         "data": {
             "target": target,
-            "target_config": persisted_target,
             "source_priority": requested_sources,
             "open_items": open_items,
             "candidate_hints": [item.to_dict() for item in candidates],
@@ -763,7 +794,7 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
             },
             "exit_code": 0,
         }
-    target, persisted_target = _require_and_persist_target(args.target)
+    target = _require_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
@@ -776,7 +807,7 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
         "command": "match",
         "message": "Structured matching completed.",
         "data": {
-            "target_config": persisted_target,
+            "target": target,
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
             "artifacts": [item.to_dict() for item in artifacts],
@@ -842,7 +873,7 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
                 "exit_code": 0,
             }
 
-    target, persisted_target = _require_and_persist_target(args.target)
+    target = _require_target(args.target)
     if args.input:
         payload = _load_json_file(args.input)
         items = [_item_from_dict(item) for item in payload.get("items", [])]
@@ -874,7 +905,7 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
     report["command"] = "submit"
     report["message"] = "Structured submit stage completed."
     report["data"] = {
-        "target_config": persisted_target,
+        "target": target,
         "items": [item.to_dict() for item in final_items],
         "matches": [item.to_dict() for item in matches],
         "attempts": [item.to_dict() for item in attempts],
@@ -917,7 +948,7 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
         report["exit_code"] = exit_code_for_report(report)
         return report
 
-    target, persisted_target = _require_and_persist_target(args.target)
+    target = _require_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
@@ -929,7 +960,7 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
     report["command"] = "report"
     report["message"] = "Structured report generated."
     report["data"] = {
-        "target_config": persisted_target,
+        "target": target,
         "items": [item.to_dict() for item in items],
         "candidates": [item.to_dict() for item in candidates],
         "artifacts": [item.to_dict() for item in artifacts],
@@ -947,6 +978,28 @@ def _handle_doctor() -> dict[str, Any]:
         "message": "Dependency checks completed.",
         "data": payload,
         "exit_code": 0 if payload["ready"] else 1,
+    }
+
+
+def _handle_config(args: argparse.Namespace) -> dict[str, Any]:
+    if args.config_command == "get":
+        return {
+            "status": "ok",
+            "command": "config.get",
+            "message": "Persisted configuration loaded.",
+            "data": _configured_target_payload(),
+            "exit_code": 0,
+        }
+
+    target = _validate_persistable_target(args.target, allow_local_target=args.allow_local_target)
+    persisted = _persist_target_url(target)
+    return {
+        "status": "ok",
+        "command": "config.set",
+        "message": "Persisted configuration updated.",
+        "user_feedback": "Saved the attendance base URL for future runs.",
+        "data": persisted,
+        "exit_code": 0,
     }
 
 
@@ -1036,6 +1089,8 @@ def main(argv: list[str]) -> int:
             payload = asyncio.run(_handle_submit(args))
         elif args.command == "report":
             payload = asyncio.run(_handle_report(args))
+        elif args.command == "config":
+            payload = _handle_config(args)
         elif args.command == "skills":
             payload = _handle_skills(args)
         elif args.command == "resolve":

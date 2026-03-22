@@ -270,6 +270,7 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertEqual(payload["command"], "run")
         self.assertEqual(payload["next_action"], "configure_target_url")
+        self.assertIn("attend config set --target", payload["suggested_command"])
 
     def test_run_without_target_falls_back_to_demo(self) -> None:
         exit_code, payload = self.run_agent_command(["run", "--json"])
@@ -378,43 +379,71 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(payload["next_action"], "auth_login")
         self.assertIn("attend auth login", payload["suggested_command"])
 
-    def test_auth_login_persists_target_and_uses_browser_import_when_available(self) -> None:
+    def test_config_get_reads_persisted_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text('PORTAL_URL="https://attendance.example.test/student/"\n', encoding="utf-8")
+            with patch.dict(os.environ, {"ENV_FILE": str(env_path)}, clear=True):
+                exit_code, payload = self.run_agent_command(["config", "get", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "config.get")
+        self.assertTrue(payload["data"]["configured"])
+        self.assertEqual(payload["data"]["value"], "https://attendance.example.test/student/")
+
+    def test_config_set_persists_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             os.environ,
             {"ENV_FILE": str(Path(temp_dir) / ".env")},
             clear=True,
-        ), patch(
-            "always_attend.agent_cli.SessionManager.import_browser_session",
-            new=AsyncMock(return_value={"status": "ok", "mode": "browser_cookie_import"}),
-        ), patch("always_attend.agent_cli.OktaClient") as mock_okta:
+        ):
             exit_code, payload = self.run_agent_command(
-                ["auth", "login", "https://attendance.example.test/student/", "--json"]
+                ["config", "set", "--target", "https://attendance.example.test/student/", "--json"]
             )
 
-            env_path = Path(payload["data"]["target_config"]["env_file"])
+            env_path = Path(payload["data"]["env_file"])
             self.assertTrue(env_path.exists())
             env_text = env_path.read_text(encoding="utf-8")
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["command"], "auth.login")
-        self.assertEqual(payload["data"]["auth_flow"]["completed_method"], "browser_cookie_import")
-        self.assertEqual(payload["data"]["target_config"]["value"], "https://attendance.example.test/student/")
+        self.assertEqual(payload["command"], "config.set")
+        self.assertEqual(payload["data"]["value"], "https://attendance.example.test/student/")
         self.assertIn('PORTAL_URL="https://attendance.example.test/student/"', env_text)
-        mock_okta.return_value.login.assert_not_called()
 
-    def test_auth_login_falls_back_to_interactive_okta_login(self) -> None:
+    def test_config_set_rejects_local_target_without_override(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             os.environ,
             {"ENV_FILE": str(Path(temp_dir) / ".env")},
             clear=True,
-        ), patch(
+        ):
+            exit_code, payload = self.run_agent_command(
+                ["config", "set", "--target", "http://127.0.0.1:8081/student/", "--json"]
+            )
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(payload["command"], "config")
+        self.assertIn("Refusing to persist a local attendance URL", payload["error"])
+
+    def test_auth_login_uses_browser_import_when_available(self) -> None:
+        with patch.dict(os.environ, {"PORTAL_URL": "https://attendance.example.test/student/"}, clear=True), patch(
+            "always_attend.agent_cli.SessionManager.import_browser_session",
+            new=AsyncMock(return_value={"status": "ok", "mode": "browser_cookie_import"}),
+        ), patch("always_attend.agent_cli.OktaClient") as mock_okta:
+            exit_code, payload = self.run_agent_command(["auth", "login", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "auth.login")
+        self.assertEqual(payload["data"]["auth_flow"]["completed_method"], "browser_cookie_import")
+        self.assertEqual(payload["data"]["target"], "https://attendance.example.test/student/")
+        mock_okta.return_value.login.assert_not_called()
+
+    def test_auth_login_falls_back_to_interactive_okta_login(self) -> None:
+        with patch.dict(os.environ, {"PORTAL_URL": "https://attendance.example.test/student/"}, clear=True), patch(
             "always_attend.agent_cli.SessionManager.import_browser_session",
             new=AsyncMock(return_value={"status": "failed", "mode": "browser_cookie_import", "reason": "missing"}),
         ), patch("always_attend.agent_cli.OktaClient") as mock_okta:
             mock_okta.return_value.login.return_value.payload = {"ok": True}
-            exit_code, payload = self.run_agent_command(
-                ["auth", "login", "https://attendance.example.test/student/", "--json"]
-            )
+            exit_code, payload = self.run_agent_command(["auth", "login", "--json"])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["data"]["auth_flow"]["completed_method"], "interactive_okta_login")
@@ -434,6 +463,30 @@ class AgentCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(mock_handle.call_args.args[0].url, "https://attendance.example.test/student/")
+
+    def test_run_with_explicit_target_does_not_persist_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            with patch.dict(os.environ, {"ENV_FILE": str(env_path)}, clear=True), patch(
+                "always_attend.agent_cli._pipeline_run",
+                new=AsyncMock(
+                    return_value={
+                        "status": "ok",
+                        "command": "run",
+                        "summary": {},
+                        "trace": [],
+                        "metrics": {},
+                        "data": {"target": "https://attendance.example.test/student/"},
+                        "exit_code": 0,
+                    }
+                ),
+            ):
+                exit_code, _ = self.run_agent_command(
+                    ["run", "--target", "https://attendance.example.test/student/", "--json"]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(env_path.exists())
 
     def test_inspect_local_target_skips_session_bootstrap(self) -> None:
         with patch("always_attend.agent_cli.SessionManager.ensure_storage_state") as mock_ensure, patch(

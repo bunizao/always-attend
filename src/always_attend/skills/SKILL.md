@@ -47,7 +47,7 @@ For every run, follow this order:
 
 1. Run `attend doctor --json`
 2. If the target URL is missing, ask the user for the attendance base URL
-3. Re-run the command after the URL is provided so it is persisted to config
+3. If the user wants that URL reused later, run `attend config set --target <attendance-url> --json`
 4. If session access is required, run `attend auth login <attendance-url> --json`
 5. Explain whether auth succeeded by browser cookie import or interactive login
 6. Run the requested inspect, handoff, match, submit, or run command
@@ -58,7 +58,7 @@ For every run, follow this order:
 The agent must always tell the user:
 
 - what URL is being used
-- whether the URL was saved for future reuse
+- whether the URL is only for this run or saved for future reuse
 - whether auth reused browser cookies or required manual login
 - what succeeded
 - what failed
@@ -71,7 +71,8 @@ Use this response pattern:
 1. Environment status
    Tell the user whether dependencies are ready or which install commands are required.
 2. Target status
-   If the attendance URL is missing, ask for it and state that it will be saved for future runs.
+   If the attendance URL is missing, ask for it.
+   Save it only when the user wants it reused later.
 3. Auth status
    Tell the user that browser cookie import will be attempted first.
    If that fails, tell them an interactive login window is required.
@@ -84,7 +85,7 @@ Use this response pattern:
 
 Keep the wording direct and explicit.
 
-- Missing URL: ask for the attendance base URL and say it will be saved
+- Missing URL: ask for the attendance base URL and ask whether it should be saved as the default
 - Cookie import success: say login was reused and no manual login is needed
 - Interactive login required: say a window must be completed by the user
 - Success: say how many items were submitted and what remains unresolved
