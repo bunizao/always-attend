@@ -25,7 +25,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple, Callable
 from urllib.parse import urlparse, urlunparse
-import argparse
 import re
 
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
@@ -1209,20 +1208,3 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             if progress_tracker:
                 progress_tracker.stop()
             await browser.close()
-
-def main():
-    """Command line interface."""
-    parser = argparse.ArgumentParser(description="Submit attendance codes")
-    parser.add_argument("--dry-run", action="store_true", help="Preview codes without submitting")
-    parser.add_argument("--week", type=int, help="Target specific week number")  
-    # Gmail/email-based extraction removed
-    
-    args = parser.parse_args()
-    
-    if args.week:
-        os.environ["WEEK_NUMBER"] = str(args.week)
-    
-    asyncio.run(run_submit(dry_run=args.dry_run, target_email=None))
-
-if __name__ == "__main__":
-    main()

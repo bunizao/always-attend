@@ -17,7 +17,6 @@ Login and session management routines for Always Attend.
 """
 
 import os
-import argparse
 import asyncio
 import tempfile
 from dataclasses import dataclass
@@ -25,15 +24,13 @@ from pathlib import Path
 from typing import List, Optional
 
 from playwright.async_api import Page
-from always_attend.paths import ensure_parent, env_file as default_env_file, storage_state_file, user_data_dir as default_user_data_dir
-from utils.logger import apply_env_configuration, logger, debug_detail
-from utils.env_utils import load_env
+from always_attend.paths import ensure_parent, storage_state_file
+from utils.logger import logger, debug_detail
 from utils.browser_session import clone_browser_session_source, resolve_browser_session_source
 from utils.session import is_storage_state_effective
 from utils.playwright_helpers import fill_first_match, click_first_match, maybe_switch_to_code_factor
 from utils.totp import gen_totp
 from core.browser_controller import BrowserConfig, BrowserController
-from utils.browser_detection import is_browser_channel_available
 
 
 @dataclass
@@ -577,85 +574,3 @@ async def check_session(check_url: str,
     )
     workflow = LoginWorkflow(config)
     return await workflow.check_session()
-
-def main():
-    load_env(str(default_env_file()))
-    apply_env_configuration()
-
-    default_channel = os.getenv("BROWSER_CHANNEL")
-    if not default_channel and is_browser_channel_available("chrome"):
-        default_channel = "chrome"
-
-    parser = argparse.ArgumentParser(description="Interactive Okta login helper (saves session state)")
-    parser.add_argument("--portal", default=os.getenv("PORTAL_URL", ""), help="Portal URL (e.g., https://attendance.example.com/student/Default.aspx)")
-    parser.add_argument("--browser", default=os.getenv("BROWSER", "chromium"), choices=["chromium", "firefox", "webkit"], help="Browser engine")
-    parser.add_argument("--channel", default=default_channel, help="Chromium channel: chrome|chrome-beta|msedge|msedge-beta")
-    parser.add_argument("--headed", action="store_true", help="Show browser UI (recommended)")
-    parser.add_argument("--storage-state", default=str(storage_state_file()), help="Path to save the session state file")
-    default_profile_dir = default_user_data_dir()
-    parser.add_argument("--user-data-dir", default=(str(default_profile_dir) if default_profile_dir is not None else None), help="Persistent profile directory (optional)")
-    parser.add_argument("--import-browser-session", action="store_true", help="Import an existing login session from the detected system browser profile (enabled by default)")
-    parser.add_argument("--check", action="store_true", help="After saving session, verify login by opening the portal again")
-    parser.add_argument("--check-only", action="store_true", help="Do not open login; only verify current session state")
-    args = parser.parse_args()
-
-    if not args.portal:
-        raise SystemExit("Missing --portal or PORTAL_URL")
-
-    if args.headed:
-        headed = True
-    else:
-        env_headless = os.getenv("HEADLESS")
-        if env_headless is None:
-            headed = True
-        else:
-            headed = (env_headless in ("0", "false", "False"))
-
-    channel = args.channel
-    if args.browser == "chromium" and channel and not is_browser_channel_available(channel):
-        logger.info(
-            "Requested browser channel '%s' is unavailable; falling back to bundled Chromium.",
-            channel,
-        )
-        logger.info("If Chromium is missing, it will be downloaded automatically.")
-        channel = None
-
-    if args.check_only:
-        ok = asyncio.run(check_session(
-            check_url=args.portal,
-            browser_name=args.browser,
-            channel=channel,
-            headed=False,
-            storage_state=args.storage_state,
-            user_data_dir=args.user_data_dir,
-        ))
-        logger.info("Session check: " + ("OK" if ok else "NOT logged in"))
-        raise SystemExit(0 if ok else 1)
-
-    if not headed:
-        logger.info("Running in headless mode. Use --headed or HEADLESS=0 for a browser window.")
-
-    asyncio.run(run_login(
-        portal_url=args.portal,
-        browser_name=args.browser,
-        channel=channel,
-        headed=headed,
-        storage_state=args.storage_state,
-        user_data_dir=args.user_data_dir,
-        import_browser_session=args.import_browser_session or os.getenv("IMPORT_BROWSER_SESSION", "1") in ("1", "true", "True"),
-    ))
-
-    if args.check:
-        ok = asyncio.run(check_session(
-            check_url=args.portal,
-            browser_name=args.browser,
-            channel=channel,
-            headed=False,
-            storage_state=args.storage_state,
-            user_data_dir=args.user_data_dir,
-        ))
-        logger.info("Session check: " + ("OK" if ok else "NOT logged in"))
-
-
-if __name__ == "__main__":
-    main()
