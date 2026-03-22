@@ -169,6 +169,12 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["command"], "skills.install")
 
+    def test_repo_skill_markdown_matches_packaged_skill_markdown(self) -> None:
+        repo_skill = Path("skills/SKILL.md").read_text(encoding="utf-8")
+        packaged_skill = Path("src/always_attend/skills/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertEqual(repo_skill, packaged_skill)
+
     def test_skills_install_existing_path_requires_force(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             skill_dir = Path(temp_dir) / "attend-agent-workflow"
