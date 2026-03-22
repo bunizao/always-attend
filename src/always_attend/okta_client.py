@@ -82,9 +82,6 @@ class OktaClient:
         command.append(url)
         return _run_okta_json(command)
 
-    def list_sessions(self) -> OktaCommandResult:
-        return _run_okta_json(["okta", "list", "--json"])
-
 
 def _parse_cookie_header(header: str) -> list[dict[str, Any]]:
     cookies: list[dict[str, Any]] = []
