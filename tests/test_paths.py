@@ -68,7 +68,6 @@ class PathDefaultsTests(unittest.TestCase):
             {
                 "ENV_FILE": "/tmp/custom.env",
                 "STORAGE_STATE": "/tmp/storage.json",
-                "PORTAL_STATE_FILE": "/tmp/portal.json",
                 "ATTENDANCE_STATS_FILE": "/tmp/stats.json",
                 "CODES_DB_PATH": "/tmp/data-root",
                 "USER_DATA_DIR": "/tmp/profile",
@@ -77,7 +76,6 @@ class PathDefaultsTests(unittest.TestCase):
         ):
             self.assertEqual(paths.env_file(), Path("/tmp/custom.env"))
             self.assertEqual(paths.storage_state_file(), Path("/tmp/storage.json"))
-            self.assertEqual(paths.portal_state_file(), Path("/tmp/portal.json"))
             self.assertEqual(paths.stats_file(), Path("/tmp/stats.json"))
             self.assertEqual(paths.codes_db_path(), Path("/tmp/data-root"))
             self.assertEqual(paths.user_data_dir(), Path("/tmp/profile"))

@@ -14,8 +14,6 @@ from always_attend.paths import (
     data_dir,
     env_file,
     log_file,
-    portal_state_file,
-    setup_sentinel_file,
     state_dir,
     stats_file,
     storage_state_file,
@@ -38,9 +36,7 @@ class RuntimePaths:
     app_data_dir: str
     data_dir: str
     env_file: str
-    setup_sentinel_file: str
     storage_state_file: str
-    portal_state_file: str
     stats_file: str
     codes_db_path: str
     user_data_dir: str | None
@@ -64,9 +60,7 @@ def get_runtime_paths() -> RuntimePaths:
         app_data_dir=str(data_dir()),
         data_dir=str(data_dir()),
         env_file=str(env_file()),
-        setup_sentinel_file=str(setup_sentinel_file()),
         storage_state_file=str(storage_state_file()),
-        portal_state_file=str(portal_state_file()),
         stats_file=str(stats_file()),
         codes_db_path=str(codes_db_path()),
         user_data_dir=(str(resolved_user_data_dir) if resolved_user_data_dir is not None else None),
