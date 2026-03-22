@@ -139,12 +139,6 @@ def main(argv: Optional[list[str]] = None):
     env_headless = os.getenv('HEADLESS')
     headed_default = (env_headless in ('0', 'false', 'False', None))
 
-    if args.stats:
-        from core.stats import StatsManager
-        stats = StatsManager()
-        stats.print_stats()
-        sys.exit(0)
-
     if args.login_only:
         step("Refreshing session only (no submission)")
         asyncio.run(_ensure_session(headed_default=headed_default))

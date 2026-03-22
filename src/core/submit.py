@@ -30,11 +30,10 @@ import re
 
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
 
-from always_attend.paths import codes_db_path, env_file as default_env_file, stats_file as default_stats_file, storage_state_file
+from always_attend.paths import codes_db_path, env_file as default_env_file, storage_state_file
 from utils.logger import apply_env_configuration, logger, step, progress, success, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
-from core.stats import StatsManager
 from utils.browser_detection import is_browser_channel_available
 from utils.playwright_install import ensure_playwright_chromium_installed
 
@@ -913,7 +912,6 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     headed = (headless_env in ("0", "false", "False"))
     storage_state = str(storage_state_file())
     
-    stats = StatsManager(str(default_stats_file()))
     progress_tracker = ProgressTracker() if SIMPLE_PROGRESS_AVAILABLE else None
     
     async with async_playwright() as p:
@@ -1197,19 +1195,7 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             tasks = [asyncio.create_task(process_course(c)) for c in enrolled_courses]
             await asyncio.gather(*tasks)
 
-            # Record overall run stats
             overall_success = any(v > 0 for v in codes_submitted.values())
-            try:
-                stats.record_run(
-                    success=overall_success,
-                    courses_processed=courses_processed,
-                    codes_submitted=codes_submitted,
-                    errors=errors,
-                    attempts=course_attempts,
-                    success_codes=course_success_codes,
-                )
-            except Exception:
-                pass
             return {
                 "success": overall_success,
                 "courses_processed": courses_processed,

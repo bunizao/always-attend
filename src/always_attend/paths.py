@@ -130,13 +130,6 @@ def storage_state_file() -> Path:
     return state_dir() / "storage_state.json"
 
 
-def stats_file() -> Path:
-    explicit = _path_from_env("ATTENDANCE_STATS_FILE", base_dir=env_file().parent)
-    if explicit is not None:
-        return explicit
-    return state_dir() / "attendance_stats.json"
-
-
 def codes_db_path() -> Path:
     explicit = _path_from_env("CODES_DB_PATH", base_dir=env_file().parent)
     if explicit is not None:
@@ -202,7 +195,6 @@ IMPORT_BROWSER_PROFILE=""
 # Logging / behavior
 LOG_PROFILE="user"
 LOG_FILE=""
-ATTENDANCE_STATS_FILE=""
 DRY_RUN="0"
 SKIP_SESSION_CHECK="0"
 
