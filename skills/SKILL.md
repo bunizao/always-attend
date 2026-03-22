@@ -1,6 +1,6 @@
 ---
 name: attend-agent-workflow
-description: Use this skill when an agent needs to complete the Always Attend workflow with multimodal evidence. It guides the agent to use `attend doctor`, `attend handoff`, and `attend submit` so image links from Moodle or Ed can be analyzed by the model instead of local OCR.
+description: Use this skill when an agent needs to bootstrap Always Attend on a cold machine, validate dependencies, and complete the attendance workflow with multimodal evidence.
 ---
 
 # Attend Agent Workflow
@@ -16,31 +16,108 @@ Treat `attend` as the execution tool and the model as the multimodal analyst.
 - The model reads those artifacts and decides the likely attendance codes.
 - `attend submit --plan ... --json` executes the final submission or dry run.
 
-## Workflow
+## Cold Start Bootstrap
 
-### 1. Check the environment
+Do not assume the machine is ready.
+Bootstrap in this exact order before the first real `attend` command.
+
+### 1. Confirm Python exists
+
+Run one of these:
+
+```bash
+python3 --version
+python --version
+```
+
+If neither command works, stop and report that Python 3.11+ is required before Always Attend can run.
+
+### 2. Confirm `uv` exists
 
 Run:
+
+```bash
+uv --version
+```
+
+If `uv` is missing, install it with the Python interpreter that worked in step 1:
+
+```bash
+python3 -m pip install uv
+```
+
+If only `python` exists, use:
+
+```bash
+python -m pip install uv
+```
+
+### 3. Confirm Always Attend exists
+
+Try the CLI first:
 
 ```bash
 attend doctor --json
 ```
 
-If `okta`, `playwright`, `moodle`, or `edstem` are missing, stop and report that clearly.
-
-Do not block on OCR. Image links are meant for the model to inspect directly.
-
-When a required CLI is missing, install it before continuing:
+If `attend: command not found`, install the tool:
 
 ```bash
-uv tool install okta-auth-cli
-uv tool install moodle-cli
-uv tool install edstem-cli
+uv tool install always-attend
 ```
+
+Then run:
+
+```bash
+attend doctor --json
+```
+
+If the tool was installed but the shell still cannot find `attend`, use this fallback command prefix:
+
+```bash
+uv tool run --from always-attend attend
+```
+
+Example:
+
+```bash
+uv tool run --from always-attend attend doctor --json
+```
+
+If you are inside the Always Attend repository, `PYTHONPATH=src python -m always_attend ...` is also valid for local development.
+
+### 4. Read `doctor --json`
+
+Use `attend doctor --json` as the machine-readable gate before collecting or submitting anything.
 
 If `doctor --json` returns an `install_hint`, prefer that exact command.
 
-### 2. Build the handoff package
+The expected setup sequence after Always Attend is available is:
+
+1. `attend doctor --json`
+2. Install missing source CLIs such as `okta`, `moodle-cli`, and `edstem`
+3. `playwright install chromium`
+4. `attend auth login <attendance-url> --json`
+
+`attend auth login` requires a human to complete the interactive login flow.
+
+## Dependency Recovery Rules
+
+When `doctor --json` reports missing tools, fix them before moving on.
+
+- `okta`: `uv tool install okta-auth-cli`
+- `moodle-cli`: `uv tool install moodle-cli`
+- `edstem`: `uv tool install edstem-cli`
+- `playwright` browser runtime: `playwright install chromium`
+
+Do not skip a missing dependency and continue with weaker behavior.
+If a dependency cannot be installed, stop and report it clearly.
+
+Do not block on OCR. Image links are meant for the model to inspect directly.
+
+## Workflow
+
+### 1. Build the handoff package
 
 Run:
 
@@ -70,7 +147,7 @@ The handoff payload contains:
 Treat `open_items` as the source of truth.
 Treat `artifacts` as evidence.
 
-### 3. Analyze evidence
+### 2. Analyze evidence
 
 For each open item:
 
@@ -80,7 +157,7 @@ For each open item:
 - Prefer confidence over speed
 - Do not invent a code if evidence is weak or conflicting
 
-### 4. Produce a plan
+### 3. Produce a plan
 
 Write a JSON plan in this shape:
 
@@ -102,7 +179,7 @@ Rules:
 - Keep slot labels aligned with the attendance-site item, not the source wording
 - Use `plan_contract` from the handoff payload as the authoritative schema when it is present
 
-### 5. Submit or dry run
+### 4. Submit or dry run
 
 Dry run first when possible:
 
@@ -116,7 +193,7 @@ Then real submit:
 attend submit --plan plan.json --target <attendance-url> --json
 ```
 
-### 6. Final reporting
+### 5. Final reporting
 
 After submit, use:
 

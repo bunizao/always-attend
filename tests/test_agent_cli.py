@@ -161,6 +161,7 @@ class AgentCliTests(unittest.TestCase):
             skill_file = installed_dir / "SKILL.md"
             self.assertTrue(skill_file.exists())
             self.assertIn("attend handoff --json", skill_file.read_text(encoding="utf-8"))
+            self.assertIn("uv tool install always-attend", skill_file.read_text(encoding="utf-8"))
             link_path = Path(agent_dir) / "attend-agent-workflow"
             self.assertTrue(link_path.is_symlink())
             self.assertEqual(link_path.resolve(), installed_dir.resolve())
@@ -174,6 +175,9 @@ class AgentCliTests(unittest.TestCase):
         packaged_skill = Path("src/always_attend/skills/SKILL.md").read_text(encoding="utf-8")
 
         self.assertEqual(repo_skill, packaged_skill)
+        self.assertIn("python3 --version", repo_skill)
+        self.assertIn("playwright install chromium", repo_skill)
+        self.assertIn("attend auth login <attendance-url> --json", repo_skill)
 
     def test_skills_install_existing_path_requires_force(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
