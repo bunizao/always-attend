@@ -19,6 +19,7 @@ from always_attend.okta_client import (
     write_storage_state_from_okta,
 )
 from always_attend.paths import storage_state_file
+from utils.session import is_storage_state_effective
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,17 @@ class SessionManager:
                 "cookie_count": 0,
                 "skipped": True,
             }
-        payload = self._okta.cookies(url=target_url).payload
+        try:
+            payload = self._okta.cookies(url=target_url).payload
+        except OktaCliError:
+            existing_state = storage_state_file()
+            if is_storage_state_effective(str(existing_state)):
+                return {
+                    "path": str(existing_state),
+                    "cookie_count": 0,
+                    "reused": True,
+                }
+            raise
         return write_storage_state_from_okta(payload, url=target_url, output_path=storage_state_file())
 
     def check_okta_session(self, target_url: str, timeout_ms: int = 30000) -> dict[str, Any]:

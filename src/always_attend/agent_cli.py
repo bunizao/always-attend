@@ -17,6 +17,7 @@ from always_attend.agent_protocol import AttendanceStateItem, CandidateRecord, M
 from always_attend.attendance_state_reader import AttendanceStateReader
 from always_attend.matcher import match_open_items
 from always_attend.okta_client import OktaCliError, OktaClient
+from always_attend.paths import env_file as runtime_env_file, storage_state_file
 from always_attend.reporter import build_report, exit_code_for_report
 from always_attend.session_manager import SessionManager
 from always_attend.skill_installer import (
@@ -36,6 +37,7 @@ from always_attend.submission_plan import (
     plan_summary,
 )
 from always_attend.submitter import Submitter
+from utils.env_utils import append_to_env_file, ensure_env_file, load_env
 
 
 class AgentCliInputError(RuntimeError):
@@ -197,6 +199,39 @@ def _require_target(target: str) -> str:
     return value
 
 
+def _persist_target_url(target: str) -> dict[str, Any]:
+    value = _require_target(target)
+    env_path = runtime_env_file()
+    ensure_env_file(str(env_path))
+    append_to_env_file(str(env_path), "PORTAL_URL", value)
+    os.environ["PORTAL_URL"] = value
+    return {
+        "key": "PORTAL_URL",
+        "value": value,
+        "env_file": str(env_path),
+        "persisted": True,
+    }
+
+
+def _require_and_persist_target(target: str) -> tuple[str, dict[str, Any]]:
+    value = _require_target(target)
+    return value, _persist_target_url(value)
+
+
+def _target_required_payload(command: str) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "command": command,
+        "error": "Missing target URL. Ask the user for the attendance base URL.",
+        "message": "The attendance base URL is required before this command can run.",
+        "user_feedback": "Ask the user for the attendance base URL. The next successful command will save it to the persistent config automatically.",
+        "next_action": "configure_target_url",
+        "config_key": "PORTAL_URL",
+        "config_path": str(runtime_env_file()),
+        "exit_code": 2,
+    }
+
+
 def _parse_sources(csv_text: str | None, explicit_sources: list[str] | None = None) -> list[str]:
     if explicit_sources:
         return [item.lower() for item in explicit_sources if item and item.lower() != "attendance"]
@@ -281,6 +316,7 @@ def _session_missing_payload(command: str, target: str, error: str) -> dict[str,
         "suggested_command": f"attend auth login {target} --json",
         "demo_command": "attend handoff --demo --json",
         "message": "A stored session is required before this command can access the attendance site.",
+        "user_feedback": "No reusable session was found. Start the auth flow so the agent can import browser cookies or open an interactive login window.",
         "exit_code": 3,
     }
 
@@ -469,20 +505,14 @@ async def _pipeline_match(
 
 
 async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
-    if args.demo or not (args.target or "").strip() or (args.dry_run and not (args.target or "").strip()):
+    if args.demo:
         items, trace = _demo_state_items()
         candidates = _demo_candidates()
         matches = _demo_matches()
         attempts = _demo_attempts()
         report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
         report["command"] = "run"
-        report["message"] = (
-            "Demo AI-native attendance run completed."
-            if args.demo
-            else "Demo AI-native attendance run completed because no target was configured for dry-run."
-        )
-        if not args.demo and not (args.target or "").strip() and not args.dry_run:
-            report["message"] = "Demo AI-native attendance run completed because no target was configured."
+        report["message"] = "Demo AI-native attendance run completed."
         report["data"] = {
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
@@ -492,7 +522,7 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
         }
         report["exit_code"] = 0
         return report
-    target = _require_target(args.target)
+    target, persisted_target = _require_and_persist_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
@@ -523,6 +553,7 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
     report["command"] = "run"
     report["message"] = "AI-native attendance run completed."
     report["data"] = {
+        "target_config": persisted_target,
         "items": [item.to_dict() for item in final_items],
         "candidates": [item.to_dict() for item in candidates],
         "artifacts": [item.to_dict() for item in artifacts],
@@ -534,59 +565,96 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _handle_auth(args: argparse.Namespace) -> dict[str, Any]:
-    okta = OktaClient()
-    target = _require_target(args.url)
+    target, persisted_target = _require_and_persist_target(args.url)
     if args.auth_command == "login":
+        browser_import = asyncio.run(_try_browser_cookie_import(target, timeout_ms=args.timeout_ms))
+        auth_flow: dict[str, Any] = {
+            "browser_cookie_import": browser_import,
+            "interactive_login": None,
+            "completed_method": None,
+        }
+        if browser_import["status"] == "ok":
+            auth_flow["completed_method"] = "browser_cookie_import"
+            return {
+                "status": "ok",
+                "command": "auth.login",
+                "message": "Browser cookies were imported into the saved portal session.",
+                "user_feedback": "Saved the attendance URL and reused an existing browser session. The agent can continue without asking you to log in again.",
+                "data": {
+                    "target": target,
+                    "target_config": persisted_target,
+                    "auth_flow": auth_flow,
+                    "session_scope": "portal_storage_state",
+                },
+                "exit_code": 0,
+            }
+
+        okta = OktaClient()
         result = okta.login(
             url=target,
             username=args.username,
             password=args.password,
             totp_secret=args.totp_secret,
-            headed=args.headed,
+            headed=True,
             timeout_ms=args.timeout_ms,
         )
+        auth_flow["interactive_login"] = {
+            "status": "ok",
+            "mode": "okta_headed",
+            "payload": result.payload,
+        }
+        auth_flow["completed_method"] = "interactive_okta_login"
         return {
             "status": "ok",
             "command": "auth.login",
-            "message": "Okta session refreshed.",
-            "data": result.payload,
+            "message": "Interactive login completed after browser cookie import was unavailable.",
+            "user_feedback": "Saved the attendance URL. A browser window was used for login, and the session is now refreshed.",
+            "data": {
+                "target": target,
+                "target_config": persisted_target,
+                "auth_flow": auth_flow,
+                "session_scope": "shared_okta_session",
+            },
             "exit_code": 0,
         }
 
+    okta = OktaClient()
     result = okta.check(url=target, timeout_ms=args.timeout_ms)
     return {
         "status": "ok",
         "command": "auth.check",
         "message": "Okta session check completed.",
-        "data": result.payload,
+        "user_feedback": "Checked the saved session for the configured attendance URL.",
+        "data": {
+            "target": target,
+            "target_config": persisted_target,
+            "session": result.payload,
+        },
         "exit_code": 0,
     }
 
 
 async def _handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
-    if args.demo or not (args.target or "").strip():
+    if args.demo:
         items, trace = _demo_state_items()
         return {
             "status": "ok",
             "command": "inspect.state",
-            "message": (
-                "Demo attendance site state loaded."
-                if args.demo
-                else "Demo attendance site state loaded because no target was configured."
-            ),
+            "message": "Demo attendance site state loaded.",
             "data": {
                 "items": [item.to_dict() for item in items],
                 "trace": [item.to_dict() for item in trace],
             },
             "exit_code": 0,
         }
-    target = _require_target(args.target)
+    target, persisted_target = _require_and_persist_target(args.target)
     items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
     return {
         "status": "ok",
         "command": "inspect.state",
         "message": "Attendance site state loaded.",
         "data": {
+            "target_config": persisted_target,
             "items": [item.to_dict() for item in items],
             "trace": [item.to_dict() for item in trace],
         },
@@ -595,7 +663,7 @@ async def _handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
-    target = _require_target(args.target)
+    target, persisted_target = _require_and_persist_target(args.target)
     items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
     candidates, collect_trace, artifacts = collect_candidates_for_sources(
         items=items,
@@ -611,6 +679,7 @@ async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
         "command": "fetch",
         "message": "Source collection completed.",
         "data": {
+            "target_config": persisted_target,
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
             "artifacts": [item.to_dict() for item in artifacts],
@@ -623,7 +692,7 @@ async def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
 async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
     if args.demo:
         return _demo_handoff_payload((args.target or "").strip())
-    target = _require_target(args.target)
+    target, persisted_target = _require_and_persist_target(args.target)
 
     try:
         items, trace = await _inspect_state(target, headed=args.headed, courses=args.course)
@@ -648,6 +717,7 @@ async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
         "message": "AI handoff package generated.",
         "data": {
             "target": target,
+            "target_config": persisted_target,
             "source_priority": requested_sources,
             "open_items": open_items,
             "candidate_hints": [item.to_dict() for item in candidates],
@@ -693,7 +763,7 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
             },
             "exit_code": 0,
         }
-    target = _require_target(args.target)
+    target, persisted_target = _require_and_persist_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
@@ -706,6 +776,7 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
         "command": "match",
         "message": "Structured matching completed.",
         "data": {
+            "target_config": persisted_target,
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
             "artifacts": [item.to_dict() for item in artifacts],
@@ -771,7 +842,7 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
                 "exit_code": 0,
             }
 
-    target = _require_target(args.target)
+    target, persisted_target = _require_and_persist_target(args.target)
     if args.input:
         payload = _load_json_file(args.input)
         items = [_item_from_dict(item) for item in payload.get("items", [])]
@@ -803,6 +874,7 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
     report["command"] = "submit"
     report["message"] = "Structured submit stage completed."
     report["data"] = {
+        "target_config": persisted_target,
         "items": [item.to_dict() for item in final_items],
         "matches": [item.to_dict() for item in matches],
         "attempts": [item.to_dict() for item in attempts],
@@ -845,7 +917,7 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
         report["exit_code"] = exit_code_for_report(report)
         return report
 
-    target = _require_target(args.target)
+    target, persisted_target = _require_and_persist_target(args.target)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
@@ -857,6 +929,7 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
     report["command"] = "report"
     report["message"] = "Structured report generated."
     report["data"] = {
+        "target_config": persisted_target,
         "items": [item.to_dict() for item in items],
         "candidates": [item.to_dict() for item in candidates],
         "artifacts": [item.to_dict() for item in artifacts],
@@ -939,6 +1012,7 @@ def _handle_skills(args: argparse.Namespace) -> dict[str, Any]:
 
 def main(argv: list[str]) -> int:
     """Execute an AI-native CLI command."""
+    load_env(str(runtime_env_file()))
     parser = build_agent_parser()
     if not argv:
         parser.print_help()
@@ -969,7 +1043,10 @@ def main(argv: list[str]) -> int:
         else:
             payload = asyncio.run(_pipeline_run(args))
     except AgentCliInputError as exc:
-        payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 2}
+        if "Missing target URL" in str(exc):
+            payload = _target_required_payload(args.command)
+        else:
+            payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 2}
     except OktaCliError as exc:
         target = getattr(args, "target", None) or getattr(args, "url", "")
         if "No stored session found" in str(exc) and target:
@@ -979,3 +1056,39 @@ def main(argv: list[str]) -> int:
     except (SourceCommandError, SubmissionPlanError, SkillInstallError) as exc:
         payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 1}
     return _emit(payload, json_output=json_output)
+
+
+async def _try_browser_cookie_import(target: str, *, timeout_ms: int) -> dict[str, Any]:
+    from core.login import LoginConfig, LoginWorkflow
+
+    workflow = LoginWorkflow(
+        LoginConfig(
+            portal_url=target,
+            headed=False,
+            storage_state=str(storage_state_file()),
+            import_browser_session=True,
+            auto_login_enabled=False,
+            timeout_ms=timeout_ms,
+            login_check_timeout_ms=timeout_ms,
+        )
+    )
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            imported = await workflow._import_session_from_system_browser()
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "mode": "browser_cookie_import",
+            "reason": str(exc),
+        }
+    if imported:
+        return {
+            "status": "ok",
+            "mode": "browser_cookie_import",
+            "storage_state": str(storage_state_file()),
+        }
+    return {
+        "status": "failed",
+        "mode": "browser_cookie_import",
+        "reason": "No reusable browser session was found.",
+    }
