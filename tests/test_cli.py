@@ -53,7 +53,7 @@ class CliEntrypointTests(unittest.TestCase):
     def test_version_flag(self) -> None:
         result = self.run_command(sys.executable, "-m", "always_attend", "--version")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("always-attend 0.1.1", result.stdout.strip())
+        self.assertIn("always-attend 0.1.2", result.stdout.strip())
 
     def test_subcommand_normalization(self) -> None:
         self.assertEqual(normalize_cli_argv(["stats"]), ["--stats"])
@@ -95,6 +95,12 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("--sources", result.stdout)
         self.assertIn("--week", result.stdout)
         self.assertIn("--demo", result.stdout)
+
+    def test_agent_skills_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "skills", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("install", result.stdout)
+        self.assertIn("list", result.stdout)
 
 
 if __name__ == "__main__":

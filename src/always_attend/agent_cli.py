@@ -18,6 +18,14 @@ from always_attend.matcher import match_open_items
 from always_attend.okta_client import OktaCliError, OktaClient
 from always_attend.reporter import build_report, exit_code_for_report
 from always_attend.session_manager import SessionManager
+from always_attend.skill_installer import (
+    discover_agent_skill_dirs,
+    SkillInstallError,
+    default_skills_dir,
+    install_bundled_skills,
+    list_bundled_skills,
+    sync_skill_symlinks,
+)
 from always_attend.source_collectors import collect_candidates_for_sources
 from always_attend.source_clients import SourceCommandError
 from always_attend.submission_plan import (
@@ -122,6 +130,27 @@ def build_agent_parser() -> argparse.ArgumentParser:
     report_parser.add_argument("--week", type=int)
     report_parser.add_argument("--headed", action="store_true")
     report_parser.add_argument("--json", action="store_true")
+
+    skills_parser = subparsers.add_parser(
+        "skills",
+        help="Export bundled skills into a neutral directory for any agent.",
+    )
+    skills_subparsers = skills_parser.add_subparsers(dest="skills_command", required=True)
+
+    skills_list = skills_subparsers.add_parser("list", help="List bundled skills and export status.")
+    skills_list.add_argument("--dest")
+    skills_list.add_argument("--agent-dir", action="append", default=[])
+    skills_list.add_argument("--json", action="store_true")
+
+    skills_install = skills_subparsers.add_parser(
+        "install",
+        help="Export bundled skills into the default or requested directory.",
+    )
+    skills_install.add_argument("--name", action="append", default=[])
+    skills_install.add_argument("--dest")
+    skills_install.add_argument("--agent-dir", action="append", default=[])
+    skills_install.add_argument("--force", action="store_true")
+    skills_install.add_argument("--json", action="store_true")
 
     resolve_parser = subparsers.add_parser("resolve", help="Validate and normalize a legacy submission plan file.")
     resolve_parser.add_argument("--plan", required=True)
@@ -860,6 +889,52 @@ def _handle_resolve(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _handle_skills(args: argparse.Namespace) -> dict[str, Any]:
+    destination = Path(args.dest).expanduser() if getattr(args, "dest", None) else None
+    skills_root = destination or default_skills_dir()
+    requested_agent_dirs = [Path(item).expanduser() for item in getattr(args, "agent_dir", []) if item]
+    discovered_agents = discover_agent_skill_dirs() if not requested_agent_dirs else []
+    if args.skills_command == "list":
+        skills = list_bundled_skills(skills_dir=destination)
+        return {
+            "status": "ok",
+            "command": "skills.list",
+            "message": "Bundled skills listed.",
+            "data": {
+                "skills_root": str(skills_root),
+                "skills": skills,
+                "agent_skill_dirs": (
+                    [{"agent": str(path), "path": str(path)} for path in requested_agent_dirs]
+                    if requested_agent_dirs
+                    else discovered_agents
+                ),
+            },
+            "exit_code": 0,
+        }
+
+    installed = install_bundled_skills(
+        requested_names=args.name,
+        skills_dir=destination,
+        force=args.force,
+    )
+    links = sync_skill_symlinks(
+        installed,
+        agent_skill_dirs=requested_agent_dirs or None,
+        force=args.force,
+    )
+    return {
+        "status": "ok",
+        "command": "skills.install",
+        "message": "Bundled skills installed.",
+        "data": {
+            "skills_root": str(skills_root),
+            "installed": [str(path) for path in installed],
+            "agent_links": links,
+        },
+        "exit_code": 0,
+    }
+
+
 def main(argv: list[str]) -> int:
     """Execute an AI-native CLI command."""
     parser = build_agent_parser()
@@ -882,6 +957,8 @@ def main(argv: list[str]) -> int:
             payload = asyncio.run(_handle_submit(args))
         elif args.command == "report":
             payload = asyncio.run(_handle_report(args))
+        elif args.command == "skills":
+            payload = _handle_skills(args)
         elif args.command == "resolve":
             payload = _handle_resolve(args)
         else:
@@ -894,6 +971,6 @@ def main(argv: list[str]) -> int:
             payload = _session_missing_payload(args.command, target, str(exc))
         else:
             payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 3}
-    except (SourceCommandError, SubmissionPlanError) as exc:
+    except (SourceCommandError, SubmissionPlanError, SkillInstallError) as exc:
         payload = {"status": "error", "command": args.command, "error": str(exc), "exit_code": 1}
     return _emit(payload, json_output=json_output)

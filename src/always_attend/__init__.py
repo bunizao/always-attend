@@ -5,7 +5,7 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("always-attend")
 except PackageNotFoundError:
-    __version__ = "0.1.1"
+    __version__ = "0.1.2"
 
 from always_attend.runtime_contract import (  # noqa: E402
     RUNTIME_CONTRACT_VERSION,

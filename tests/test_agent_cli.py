@@ -141,6 +141,69 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "doctor")
         self.assertTrue(payload["data"]["ready"])
 
+    def test_skills_list_reports_bundled_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            exit_code, payload = self.run_agent_command(["skills", "list", "--dest", temp_dir, "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "skills.list")
+        self.assertEqual(payload["data"]["skills"][0]["name"], "attend-agent-workflow")
+        self.assertFalse(payload["data"]["skills"][0]["installed"])
+        self.assertIn("agent_skill_dirs", payload["data"])
+
+    def test_skills_install_writes_skill_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as agent_dir:
+            exit_code, payload = self.run_agent_command(
+                ["skills", "install", "--dest", temp_dir, "--agent-dir", agent_dir, "--json"]
+            )
+
+            installed_dir = Path(payload["data"]["installed"][0])
+            skill_file = installed_dir / "SKILL.md"
+            self.assertTrue(skill_file.exists())
+            self.assertIn("attend handoff --json", skill_file.read_text(encoding="utf-8"))
+            link_path = Path(agent_dir) / "attend-agent-workflow"
+            self.assertTrue(link_path.is_symlink())
+            self.assertEqual(link_path.resolve(), installed_dir.resolve())
+            self.assertEqual(payload["data"]["agent_links"][0]["status"], "linked")
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "skills.install")
+
+    def test_skills_install_existing_path_requires_force(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            skill_dir = Path(temp_dir) / "attend-agent-workflow"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text("old", encoding="utf-8")
+
+            exit_code, payload = self.run_agent_command(["skills", "install", "--dest", temp_dir, "--json"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["command"], "skills")
+        self.assertIn("Use --force to overwrite", payload["error"])
+
+    def test_skills_install_uses_attend_skills_dir_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as agent_dir, patch.dict(
+            "os.environ", {"ATTEND_SKILLS_DIR": temp_dir}, clear=False
+        ):
+            exit_code, payload = self.run_agent_command(["skills", "install", "--agent-dir", agent_dir, "--json"])
+            self.assertTrue((Path(temp_dir) / "attend-agent-workflow" / "SKILL.md").exists())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["data"]["skills_root"], str(Path(temp_dir)))
+
+    def test_skills_install_skips_conflicting_agent_link_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as agent_dir:
+            conflict = Path(agent_dir) / "attend-agent-workflow"
+            conflict.mkdir(parents=True)
+            (conflict / "SKILL.md").write_text("conflict", encoding="utf-8")
+
+            exit_code, payload = self.run_agent_command(
+                ["skills", "install", "--dest", temp_dir, "--agent-dir", agent_dir, "--json"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["data"]["agent_links"][0]["status"], "skipped_conflict")
+
     def test_run_command_uses_pipeline_exit_code(self) -> None:
         async_payload = {
             "status": "ok",
