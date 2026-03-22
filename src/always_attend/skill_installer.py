@@ -17,7 +17,7 @@ class BundledSkill:
 
     name: str
     description: str
-    resource_path: tuple[str, ...]
+    resource_files: tuple[tuple[str, ...], ...]
 
 
 BUNDLED_SKILLS: tuple[BundledSkill, ...] = (
@@ -27,7 +27,7 @@ BUNDLED_SKILLS: tuple[BundledSkill, ...] = (
             "Use attend as the execution tool and the model as the multimodal analyst "
             "for attendance handoff and submission."
         ),
-        resource_path=("skills", "SKILL.md"),
+        resource_files=(("skills", "SKILL.md"), ("skills", "BOOTSTRAP.md")),
     ),
 )
 
@@ -114,12 +114,6 @@ def install_bundled_skills(
     bundled_by_name = {skill.name: skill for skill in BUNDLED_SKILLS}
     for name in selected:
         bundled_skill = bundled_by_name[name]
-        source_root = resources.files("always_attend")
-        for part in bundled_skill.resource_path:
-            source_root = source_root.joinpath(part)
-        if not source_root.exists():
-            raise SkillInstallError(f"Bundled skill payload is missing: {name}")
-
         destination = destination_root / name
         if destination.exists():
             if not force:
@@ -128,7 +122,14 @@ def install_bundled_skills(
                 )
             _remove_path(destination)
 
-        _copy_skill_payload(source_root, destination)
+        destination.mkdir(parents=True, exist_ok=True)
+        for resource_path in bundled_skill.resource_files:
+            source = resources.files("always_attend")
+            for part in resource_path:
+                source = source.joinpath(part)
+            if not source.exists():
+                raise SkillInstallError(f"Bundled skill payload is missing: {name}")
+            _copy_skill_file(source, destination / resource_path[-1])
         installed_paths.append(destination)
 
     return installed_paths
@@ -197,25 +198,10 @@ def sync_skill_symlinks(
     return results
 
 
-def _copy_traversable_tree(source, destination: Path) -> None:
-    """Copy an importlib Traversable directory tree into a filesystem path."""
-    if source.is_file():
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(source.read_bytes())
-        return
-
-    destination.mkdir(parents=True, exist_ok=True)
-    for child in source.iterdir():
-        _copy_traversable_tree(child, destination / child.name)
-
-
-def _copy_skill_payload(source, destination: Path) -> None:
-    """Copy a bundled skill file or directory into the installed skill directory."""
-    if source.is_file():
-        destination.mkdir(parents=True, exist_ok=True)
-        (destination / "SKILL.md").write_bytes(source.read_bytes())
-        return
-    _copy_traversable_tree(source, destination)
+def _copy_skill_file(source, destination: Path) -> None:
+    """Copy a bundled skill file into the installed skill directory."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(source.read_bytes())
 
 
 def _remove_path(path: Path) -> None:
