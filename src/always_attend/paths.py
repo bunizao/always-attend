@@ -123,32 +123,11 @@ def env_template_file() -> Path | None:
     return None
 
 
-def setup_sentinel_file() -> Path:
-    explicit = _path_from_env("SETUP_SENTINEL_FILE", base_dir=env_file().parent)
-    if explicit is not None:
-        return explicit
-    return state_dir() / ".first_time_setup_complete"
-
-
-def portal_state_file() -> Path:
-    explicit = _path_from_env("PORTAL_STATE_FILE", base_dir=env_file().parent)
-    if explicit is not None:
-        return explicit
-    return state_dir() / "portal_state.json"
-
-
 def storage_state_file() -> Path:
     explicit = _path_from_env("STORAGE_STATE", base_dir=env_file().parent)
     if explicit is not None:
         return explicit
     return state_dir() / "storage_state.json"
-
-
-def stats_file() -> Path:
-    explicit = _path_from_env("ATTENDANCE_STATS_FILE", base_dir=env_file().parent)
-    if explicit is not None:
-        return explicit
-    return state_dir() / "attendance_stats.json"
 
 
 def codes_db_path() -> Path:
@@ -197,9 +176,6 @@ PORTAL_URL=""
 # Optional: TOTP Secret for 2FA (Base32 encoded)
 TOTP_SECRET=""
 
-# Preferred language: en, zh_CN, zh_TW
-LANGUAGE_PREFERENCE=""
-
 # Optional overrides. Leave blank to use the standard user directories above.
 CODES_DB_PATH=""
 CODES_DB_REPO=""
@@ -219,15 +195,7 @@ IMPORT_BROWSER_PROFILE=""
 # Logging / behavior
 LOG_PROFILE="user"
 LOG_FILE=""
-ATTENDANCE_STATS_FILE=""
-PORTAL_STATE_FILE=""
-SKIP_SESSION_CHECK="0"
 DRY_RUN="0"
-SKIP_UPDATE_CHECK="0"
+SKIP_SESSION_CHECK="0"
 
-# CLI interface
-CLI_STYLE="fancy"
-ANIMATION_SPEED="normal"
-CLI_ANIMATIONS="on"
-FORCE_ANIMATIONS="false"
 """

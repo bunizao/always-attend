@@ -9,7 +9,6 @@ import sys
 import unittest
 from pathlib import Path
 
-from always_attend.argv import normalize_cli_argv
 from always_attend.runtime_contract import get_runtime_paths_dict
 
 
@@ -30,10 +29,10 @@ class CliEntrypointTests(unittest.TestCase):
 
     def assert_help_output(self, result: subprocess.CompletedProcess[str]) -> None:
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("attend stats", result.stdout)
-        self.assertIn("attend login", result.stdout)
-        self.assertIn("attend week 4", result.stdout)
-        self.assertIn("--dry-run", result.stdout)
+        self.assertIn("run", result.stdout)
+        self.assertIn("inspect", result.stdout)
+        self.assertIn("auth", result.stdout)
+        self.assertIn("skills", result.stdout)
 
     def test_attend_console_script_help(self) -> None:
         scripts_dir = Path(sys.executable).parent
@@ -53,13 +52,7 @@ class CliEntrypointTests(unittest.TestCase):
     def test_version_flag(self) -> None:
         result = self.run_command(sys.executable, "-m", "always_attend", "--version")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("always-attend 0.1.1", result.stdout.strip())
-
-    def test_subcommand_normalization(self) -> None:
-        self.assertEqual(normalize_cli_argv(["stats"]), ["--stats"])
-        self.assertEqual(normalize_cli_argv(["login", "--headed"]), ["--login-only", "--headed"])
-        self.assertEqual(normalize_cli_argv(["week", "5", "--dry-run"]), ["--week", "5", "--dry-run"])
-        self.assertEqual(normalize_cli_argv(["week", "--help"]), ["--help"])
+        self.assertIn("always-attend 0.1.2", result.stdout.strip())
 
     def test_paths_builtin_json(self) -> None:
         result = self.run_command(sys.executable, "-m", "always_attend", "paths", "--json")
@@ -75,6 +68,32 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertEqual(payload["contract_version"], "2")
         self.assertIn("app_data_dir", payload)
         self.assertIn("codes_db_path", payload)
+
+    def test_agent_auth_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "auth", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("login", result.stdout)
+        self.assertIn("check", result.stdout)
+
+    def test_agent_run_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "run", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("--target", result.stdout)
+        self.assertIn("--sources", result.stdout)
+        self.assertIn("--min-confidence", result.stdout)
+
+    def test_agent_handoff_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "handoff", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("--sources", result.stdout)
+        self.assertIn("--week", result.stdout)
+        self.assertIn("--demo", result.stdout)
+
+    def test_agent_skills_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "skills", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("install", result.stdout)
+        self.assertIn("list", result.stdout)
 
 
 if __name__ == "__main__":

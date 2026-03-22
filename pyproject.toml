@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "always-attend"
-version = "0.1.1"
-description = "Automation assistant for attendance management."
+version = "0.1.2"
+description = "Agent-first CLI for inspecting, matching, and submitting attendance codes."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-only"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "bunizao" }
 ]
-keywords = ["attendance", "automation", "playwright", "cli"]
+keywords = ["attendance", "automation", "agent", "playwright", "cli"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
@@ -22,6 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Utilities",
 ]
 dependencies = [
@@ -29,6 +30,12 @@ dependencies = [
   "pyotp==2.9.0",
   "aiohttp>=3.8.0",
   "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2.2",
+  "twine>=6.1.0",
 ]
 
 [project.urls]
@@ -41,6 +48,9 @@ attend = "always_attend.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.package-data]
+always_attend = ["skills/SKILL.md", "skills/BOOTSTRAP.md"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

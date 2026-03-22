@@ -25,16 +25,14 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple, Callable
 from urllib.parse import urlparse, urlunparse
-import argparse
 import re
 
 from playwright.async_api import async_playwright, Page, TimeoutError as PwTimeout
 
-from always_attend.paths import codes_db_path, env_file as default_env_file, stats_file as default_stats_file, storage_state_file
+from always_attend.paths import codes_db_path, env_file as default_env_file, storage_state_file
 from utils.logger import apply_env_configuration, logger, step, progress, success, debug_detail
 from utils.env_utils import load_env
 from utils.session import is_storage_state_effective
-from core.stats import StatsManager
 from utils.browser_detection import is_browser_channel_available
 from utils.playwright_install import ensure_playwright_chromium_installed
 
@@ -863,7 +861,7 @@ async def collect_day_anchors(page: Page, base: str, start_monday: Optional[date
         logger.warning(f"Failed to collect day anchors: {e}")
         return []
 
-async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> None:
+async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) -> dict:
     """Main submission logic."""
     
     load_env(str(default_env_file()))
@@ -872,7 +870,15 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     portal_url = os.getenv("PORTAL_URL")
     if not portal_url:
         logger.error("PORTAL_URL not set in environment")
-        return
+        return {
+            "success": False,
+            "error": "PORTAL_URL not set in environment",
+            "courses_processed": [],
+            "codes_submitted": {},
+            "errors": ["PORTAL_URL not set in environment"],
+            "attempts": {},
+            "success_codes": {},
+        }
 
     sync_codes_database()
 
@@ -905,7 +911,6 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
     headed = (headless_env in ("0", "false", "False"))
     storage_state = str(storage_state_file())
     
-    stats = StatsManager(str(default_stats_file()))
     progress_tracker = ProgressTracker() if SIMPLE_PROGRESS_AVAILABLE else None
     
     async with async_playwright() as p:
@@ -960,13 +965,29 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             
             if not await is_authenticated(page):
                 logger.error("Not authenticated. Please run login first.")
-                return
+                return {
+                    "success": False,
+                    "error": "Not authenticated. Please run login first.",
+                    "courses_processed": [],
+                    "codes_submitted": {},
+                    "errors": ["Not authenticated. Please run login first."],
+                    "attempts": {},
+                    "success_codes": {},
+                }
             
             # Scrape enrolled courses
             enrolled_courses = await scrape_enrolled_courses(page, base_url)
             if not enrolled_courses:
                 logger.error("No enrolled courses found")
-                return
+                return {
+                    "success": False,
+                    "error": "No enrolled courses found",
+                    "courses_processed": [],
+                    "codes_submitted": {},
+                    "errors": ["No enrolled courses found"],
+                    "attempts": {},
+                    "success_codes": {},
+                }
             
             await page.goto(f"{base_url}/student/Units.aspx")
             
@@ -1173,38 +1194,17 @@ async def run_submit(dry_run: bool = False, target_email: Optional[str] = None) 
             tasks = [asyncio.create_task(process_course(c)) for c in enrolled_courses]
             await asyncio.gather(*tasks)
 
-            # Record overall run stats
             overall_success = any(v > 0 for v in codes_submitted.values())
-            try:
-                stats.record_run(
-                    success=overall_success,
-                    courses_processed=courses_processed,
-                    codes_submitted=codes_submitted,
-                    errors=errors,
-                    attempts=course_attempts,
-                    success_codes=course_success_codes,
-                )
-            except Exception:
-                pass
+            return {
+                "success": overall_success,
+                "courses_processed": courses_processed,
+                "codes_submitted": codes_submitted,
+                "errors": errors,
+                "attempts": course_attempts,
+                "success_codes": course_success_codes,
+            }
         
         finally:
             if progress_tracker:
                 progress_tracker.stop()
             await browser.close()
-
-def main():
-    """Command line interface."""
-    parser = argparse.ArgumentParser(description="Submit attendance codes")
-    parser.add_argument("--dry-run", action="store_true", help="Preview codes without submitting")
-    parser.add_argument("--week", type=int, help="Target specific week number")  
-    # Gmail/email-based extraction removed
-    
-    args = parser.parse_args()
-    
-    if args.week:
-        os.environ["WEEK_NUMBER"] = str(args.week)
-    
-    asyncio.run(run_submit(dry_run=args.dry_run, target_email=None))
-
-if __name__ == "__main__":
-    main()
