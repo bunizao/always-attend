@@ -30,10 +30,10 @@ class CliEntrypointTests(unittest.TestCase):
 
     def assert_help_output(self, result: subprocess.CompletedProcess[str]) -> None:
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("attend stats", result.stdout)
-        self.assertIn("attend login", result.stdout)
-        self.assertIn("attend week 4", result.stdout)
-        self.assertIn("--dry-run", result.stdout)
+        self.assertIn("run", result.stdout)
+        self.assertIn("inspect", result.stdout)
+        self.assertIn("auth", result.stdout)
+        self.assertIn("skills", result.stdout)
 
     def test_attend_console_script_help(self) -> None:
         scripts_dir = Path(sys.executable).parent
@@ -56,10 +56,10 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("always-attend 0.1.2", result.stdout.strip())
 
     def test_subcommand_normalization(self) -> None:
-        self.assertEqual(normalize_cli_argv(["stats"]), ["--stats"])
-        self.assertEqual(normalize_cli_argv(["login", "--headed"]), ["--login-only", "--headed"])
-        self.assertEqual(normalize_cli_argv(["week", "5", "--dry-run"]), ["--week", "5", "--dry-run"])
-        self.assertEqual(normalize_cli_argv(["week", "--help"]), ["--help"])
+        self.assertEqual(normalize_cli_argv(["stats"]), ["stats"])
+        self.assertEqual(normalize_cli_argv(["login", "--headed"]), ["login", "--headed"])
+        self.assertEqual(normalize_cli_argv(["week", "5", "--dry-run"]), ["week", "5", "--dry-run"])
+        self.assertEqual(normalize_cli_argv(["week", "--help"]), ["week", "--help"])
 
     def test_paths_builtin_json(self) -> None:
         result = self.run_command(sys.executable, "-m", "always_attend", "paths", "--json")

@@ -1,4 +1,4 @@
-"""CLI argument normalization for public subcommands."""
+"""Shared CLI examples for legacy modules."""
 
 from __future__ import annotations
 
@@ -16,38 +16,11 @@ CLI_EXAMPLES = (
     "  attend doctor --json\n"
     "  attend resolve --plan plan.json --json\n"
     "  attend submit --plan plan.json --json\n"
-    "  attend stats\n"
-    "  attend login\n"
-    "  attend paths --json\n"
-    "  attend week 4\n"
-    "  attend week 4 --dry-run"
+    "  attend skills list --json\n"
+    "  attend paths --json"
 )
 
 
 def normalize_cli_argv(argv: list[str]) -> list[str]:
-    """Translate public subcommands into the existing flag-based interface."""
-    if not argv:
-        return []
-
-    command, *rest = argv
-
-    if command == "help":
-        return ["--help", *rest]
-
-    if command == "stats":
-        return ["--stats", *rest]
-
-    if command == "login":
-        return ["--login-only", *rest]
-
-    if command == "week":
-        if not rest:
-            raise SystemExit(
-                "usage: attend week <number> [options]\n"
-                "error: the following arguments are required: number"
-            )
-        if rest[0] in {"-h", "--help"}:
-            return ["--help", *rest[1:]]
-        return ["--week", *rest]
-
+    """Return arguments unchanged for legacy internal callers."""
     return argv

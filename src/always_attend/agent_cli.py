@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from always_attend import __version__
 from always_attend.agent_protocol import AttendanceStateItem, CandidateRecord, MatchResult, SourceArtifact, SubmissionAttempt, TraceEvent
 from always_attend.attendance_state_reader import AttendanceStateReader
 from always_attend.matcher import match_open_items
@@ -55,6 +56,7 @@ def build_agent_parser() -> argparse.ArgumentParser:
         prog="attend",
         description="AI-native attendance CLI for Codex/OpenClaw-style agents.",
     )
+    parser.add_argument("--version", action="version", version=f"always-attend {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Inspect, collect, match, submit, and report in one command.")
@@ -938,6 +940,9 @@ def _handle_skills(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str]) -> int:
     """Execute an AI-native CLI command."""
     parser = build_agent_parser()
+    if not argv:
+        parser.print_help()
+        return 0
     args = parser.parse_args(argv)
     json_output = bool(getattr(args, "json", False))
     try:
