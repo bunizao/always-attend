@@ -16,6 +16,80 @@ Treat `attend` as the execution tool and the model as the multimodal analyst.
 - The model reads those artifacts and decides the likely attendance codes.
 - `attend submit --plan ... --json` executes the final submission or dry run.
 
+## User Interaction Contract
+
+The agent is responsible for user interaction.
+`attend` returns machine-readable state, but it does not run a conversational wizard.
+
+Always translate command results into clear user feedback.
+Do not make the user read raw JSON unless they explicitly ask for it.
+
+### User Situations
+
+Handle these situations explicitly:
+
+1. Missing attendance base URL
+2. Missing dependencies from `attend doctor --json`
+3. Saved URL exists and can be reused
+4. No reusable session is available
+5. Browser cookie import succeeds
+6. Browser cookie import fails and interactive login is required
+7. Existing `storage_state` can be reused
+8. No open attendance items exist
+9. Open items exist but evidence is insufficient
+10. Submission is rejected by the portal
+11. DOM state is locked or post-submit state is unverified
+12. Submission completes successfully
+
+### Required Agent Behavior
+
+For every run, follow this order:
+
+1. Run `attend doctor --json`
+2. If the target URL is missing, ask the user for the attendance base URL
+3. Re-run the command after the URL is provided so it is persisted to config
+4. If session access is required, run `attend auth login <attendance-url> --json`
+5. Explain whether auth succeeded by browser cookie import or interactive login
+6. Run the requested inspect, handoff, match, submit, or run command
+7. Summarize the outcome in user language
+
+### Feedback Rules
+
+The agent must always tell the user:
+
+- what URL is being used
+- whether the URL was saved for future reuse
+- whether auth reused browser cookies or required manual login
+- what succeeded
+- what failed
+- what needs user action next
+
+### Standard Feedback Chain
+
+Use this response pattern:
+
+1. Environment status
+   Tell the user whether dependencies are ready or which install commands are required.
+2. Target status
+   If the attendance URL is missing, ask for it and state that it will be saved for future runs.
+3. Auth status
+   Tell the user that browser cookie import will be attempted first.
+   If that fails, tell them an interactive login window is required.
+4. Execution status
+   Tell the user which command is running and why.
+5. Outcome summary
+   Group the result into submitted, unresolved, rejected, locked, and next action.
+
+### Required Wording Intent
+
+Keep the wording direct and explicit.
+
+- Missing URL: ask for the attendance base URL and say it will be saved
+- Cookie import success: say login was reused and no manual login is needed
+- Interactive login required: say a window must be completed by the user
+- Success: say how many items were submitted and what remains unresolved
+- Failure: say which stage failed and what the next user action is
+
 ## Bootstrap
 
 Read `BOOTSTRAP.md` only when the machine is not already ready for `attend`.
@@ -129,3 +203,5 @@ Summarize:
 - Do not treat source screenshots as local OCR work
 - Do not submit low-confidence codes just because an image exists
 - Do not hide unresolved items; they are part of the output
+- Do not silently switch to demo mode when a real attendance URL is required
+- Do not leave the user without a plain-language summary of failures and next actions
