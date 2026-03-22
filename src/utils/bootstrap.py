@@ -1,20 +1,4 @@
-"""
- █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
-██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
-███████║██║     ██║ █╗ ██║███████║ ╚████╔╝ ███████╗
-██╔══██║██║     ██║███╗██║██╔══██║  ╚██╔╝  ╚════██║
-██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
-╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
-
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗ 
-██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
-███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
-██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
-██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝ 
-src/utils/bootstrap.py
-Environment bootstrap helpers for Always Attend.
-"""
+"""Environment bootstrap helpers for Always Attend."""
 
 import importlib.util
 import os
@@ -68,7 +52,7 @@ def _ensure_dependencies(project_root: Path) -> None:
     if not python_exe.exists():
         raise BootstrapError("Virtual environment interpreter missing at {}".format(python_exe))
 
-    required_modules = ("playwright", "pyotp", "aiohttp", "rich")
+    required_modules = ("playwright", "pyotp", "aiohttp")
     flag_path = venv_path / "requirements_installed.flag"
 
     missing_modules = [mod for mod in required_modules if importlib.util.find_spec(mod) is None]

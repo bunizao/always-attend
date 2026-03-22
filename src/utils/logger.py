@@ -1,28 +1,9 @@
-#!/usr/bin/env python3
-"""
- █████╗ ██╗     ██╗    ██╗ █████╗ ██╗   ██╗███████╗
-██╔══██╗██║     ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝
-███████║██║     ██║ █╗ ██║███████║ ╚████╔╝ ███████╗
-██╔══██║██║     ██║███╗██║██╔══██║  ╚██╔╝  ╚════██║
-██║  ██║███████╗╚███╔███╔╝██║  ██║   ██║   ███████║
-╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
+"""Structured logging helpers for Always Attend."""
 
- █████╗ ████████╗████████╗███████╗███╗   ██╗██████╗
-██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝████╗  ██║██╔══██╗
-███████║   ██║      ██║   █████╗  ██╔██╗ ██║██║  ██║
-██╔══██║   ██║      ██║   ██╔══╝  ██║╚██╗██║██║  ██║
-██║  ██║   ██║      ██║   ███████╗██║ ╚████║██████╔╝
-╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═══╝╚═════╝
-src/utils/logger.py
-Structured logging helpers for Always Attend.
-"""
 from __future__ import annotations
 
-import asyncio
-import itertools
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -38,9 +19,6 @@ __all__ = [
     "set_log_profile",
 ]
 
-# ---------------------------------------------------------------------------
-# Palette and helpers
-
 _PALETTE: Dict[str, str] = {
     "reset": "\033[0m",
     "dim": "\033[2m",
@@ -49,7 +27,6 @@ _PALETTE: Dict[str, str] = {
     "green": "\033[32m",
     "yellow": "\033[33m",
     "red": "\033[31m",
-    "cyan": "\033[36m",
     "magenta": "\033[35m",
 }
 
@@ -58,41 +35,39 @@ LOG_FILE = os.getenv("LOG_FILE")
 NO_COLOR = os.getenv("NO_COLOR") is not None
 LOG_LEVEL_OVERRIDE = os.getenv("LOG_LEVEL")
 
+
 def _apply_color(text: str, *styles: str) -> str:
     if NO_COLOR or not styles:
         return text
     colors = "".join(_PALETTE.get(style, "") for style in styles)
     return f"{colors}{text}{_PALETTE['reset']}"
 
-# ---------------------------------------------------------------------------
-# Formatter and adapter
 
 class LayeredFormatter(logging.Formatter):
     """Formatter that decorates output based on the record.layer attribute."""
 
     LAYER_MAPPINGS: Dict[str, Dict[str, Any]] = {
-        "step": {"icon": "▶", "style": ("blue", "bold")},
-        "progress": {"icon": "…", "style": ("blue",)},
-        "success": {"icon": "✓", "style": ("green", "bold")},
+        "step": {"icon": ">", "style": ("blue", "bold")},
+        "progress": {"icon": "-", "style": ("blue",)},
+        "success": {"icon": "+", "style": ("green", "bold")},
         "warning": {"icon": "!", "style": ("yellow", "bold")},
-        "error": {"icon": "✗", "style": ("red", "bold")},
-        "debug": {"icon": "·", "style": ("magenta",)},
-        "user": {"icon": "•", "style": ()},
+        "error": {"icon": "x", "style": ("red", "bold")},
+        "debug": {"icon": ".", "style": ("magenta",)},
+        "user": {"icon": "*", "style": ()},
     }
 
     def format(self, record: logging.LogRecord) -> str:
         layer = getattr(record, "layer", "user")
         mapping = self.LAYER_MAPPINGS.get(layer, self.LAYER_MAPPINGS["user"])
-        icon = mapping["icon"]
-        style = mapping["style"]
         message = super().format(record)
         if layer == "debug":
-            return f"{_apply_color('[debug]', 'dim')} {message}"
-        prefix = _apply_color(icon, *style)
+            return "{} {}".format(_apply_color("[debug]", "dim"), message)
+        prefix = _apply_color(mapping["icon"], *mapping["style"])
         return f"{prefix} {message}"
 
+
 class LayeredAdapter(logging.LoggerAdapter):
-    """Logger adapter that injects a 'layer' extra value."""
+    """Logger adapter that injects a ``layer`` extra value."""
 
     def __init__(self, logger: logging.Logger, default_layer: str = "user"):
         super().__init__(logger, {"layer": default_layer})
@@ -120,8 +95,6 @@ class LayeredAdapter(logging.LoggerAdapter):
         kwargs.setdefault("layer", "error")
         super().critical(msg, *args, **kwargs)
 
-# ---------------------------------------------------------------------------
-# Configuration
 
 def _configure_base_logger() -> LayeredAdapter:
     base_logger = logging.getLogger("always_attend")
@@ -162,139 +135,52 @@ def _configure_base_logger() -> LayeredAdapter:
 
     return LayeredAdapter(base_logger)
 
+
 logger = _configure_base_logger()
 
-# ---------------------------------------------------------------------------
-# Animation support
-
-try:
-    from utils.animations import AnimationConfig
-    ANIMATIONS_AVAILABLE = True
-except ImportError:
-    ANIMATIONS_AVAILABLE = False
-
-def _animate_text_output(text: str, delay: float = 0.008) -> None:
-    """Animate text output using Rich live updates to avoid ANSI artifacts."""
-    if not ANIMATIONS_AVAILABLE:
-        print(text, flush=True)
-        return
-
-    config = AnimationConfig()
-    if not config.enabled or config.style == "minimal":
-        print(text, flush=True)
-        return
-
-    try:
-        from rich.console import Console
-        from rich.live import Live
-        from rich.text import Text
-    except ImportError:
-        print(text, flush=True)
-        return
-
-    import time
-
-    console = Console()
-    buffer = text[0:0]
-    renderable = Text("", no_wrap=True)
-
-    refresh_hz = 1.0 / max(delay, 0.004) if delay else 60.0
-
-    with Live(renderable, console=console, refresh_per_second=min(120, int(refresh_hz)), transient=False) as live:
-        for char in text:
-            buffer += char
-            renderable = Text.from_ansi(buffer)
-            renderable.no_wrap = True
-            live.update(renderable)
-            if char.strip() and delay:
-                time.sleep(delay)
-    console.line()
-
-def _enhanced_log_message(message: str, layer: str, animate: bool = True) -> None:
-    """Enhanced logging with optional animation effects."""
-    if not ANIMATIONS_AVAILABLE or not animate:
-        logger.log(logging.INFO, message, layer=layer)
-        return
-
-    config = AnimationConfig()
-    if not config.enabled or config.style != "fancy":
-        logger.log(logging.INFO, message, layer=layer)
-        return
-
-    # Get layer formatting
-    mapping = LayeredFormatter.LAYER_MAPPINGS.get(layer, LayeredFormatter.LAYER_MAPPINGS["user"])
-    icon = mapping["icon"]
-    style = mapping["style"]
-
-    # Create formatted message manually for animation
-    prefix = _apply_color(icon, *style)
-    formatted_message = f"{prefix} {message}"
-
-    # Animate the output
-    _animate_text_output(formatted_message, config.char_delay * 0.8)  # Slightly faster than banner
-
-# ---------------------------------------------------------------------------
-# Public helpers
 
 def step(message: str, *, animated: bool = True) -> None:
-    """Log a major step in the workflow with optional animation."""
-    if animated and ANIMATIONS_AVAILABLE:
-        _enhanced_log_message(message, "step", animate=True)
-    else:
-        logger.log(logging.INFO, message, layer="step")
+    """Log a major step in the workflow."""
+    _ = animated
+    logger.log(logging.INFO, message, layer="step")
+
 
 def progress(message: str, *, animated: bool = True) -> None:
-    """Log a short-lived progress update with optional animation."""
-    if animated and ANIMATIONS_AVAILABLE:
-        _enhanced_log_message(message, "progress", animate=True)
-    else:
-        logger.log(logging.INFO, message, layer="progress")
+    """Log a short-lived progress update."""
+    _ = animated
+    logger.log(logging.INFO, message, layer="progress")
+
 
 def success(message: str, *, animated: bool = True) -> None:
-    """Log successful completion of an action with optional animation."""
-    if animated and ANIMATIONS_AVAILABLE:
-        _enhanced_log_message(message, "success", animate=True)
-    else:
-        logger.log(logging.INFO, message, layer="success")
+    """Log successful completion of an action."""
+    _ = animated
+    logger.log(logging.INFO, message, layer="success")
+
 
 def debug_detail(message: str) -> None:
-    """Log detailed debug information (hidden unless LOG_PROFILE=debug)."""
+    """Log detailed debug information."""
     logger.log(logging.DEBUG, message, layer="debug")
+
 
 def get_logger(name: str, *, layer: str = "user") -> LayeredAdapter:
     """Return a child logger using the layered formatting."""
     child = logging.getLogger(f"always_attend.{name}")
     return LayeredAdapter(child, default_layer=layer)
 
-# ---------------------------------------------------------------------------
-# Spinner support
 
 class _Spinner:
-    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    """Compatibility wrapper for code paths that expect a spinner context."""
 
     def __init__(self, message: str):
         self.message = message
-        self._task: Optional[asyncio.Task[None]] = None
-        self._running = False
         self._status: Optional[str] = None
         self._failure_logged = False
 
     async def __aenter__(self) -> "_Spinner":
-        await _SPINNER_LOCK.acquire()
-        self._running = True
-        self._task = asyncio.create_task(self._animate())
+        progress(self.message)
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> bool:
-        self._running = False
-        if self._task:
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        _clear_current_line()
-        _SPINNER_LOCK.release()
-
         if exc_type is not None:
             self.fail(str(exc) if exc else None)
             return False
@@ -306,43 +192,27 @@ class _Spinner:
             success(self.message)
         return False
 
-    async def _animate(self) -> None:
-        for frame in itertools.cycle(self.FRAMES):
-            if not self._running:
-                break
-            sys.stdout.write(f"\r{_apply_color(frame, 'blue')} {self.message}")
-            sys.stdout.flush()
-            await asyncio.sleep(0.12)
-        _clear_current_line()
-
     def succeed(self) -> None:
         self._status = "success"
 
     def fail(self, reason: Optional[str] = None) -> None:
         self._status = "failure"
         if reason:
-            logger.error(f"{self.message} – {reason}")
+            logger.error(f"{self.message}: {reason}")
             self._failure_logged = True
 
     def update(self, message: str) -> None:
         self.message = message
 
     def note(self, message: str, *, level: str = "info") -> None:
-        _clear_current_line()
         log_fn = getattr(logger, level, logger.info)
         log_fn(message)
 
-_SPINNER_LOCK = asyncio.Lock()
-
-def _clear_current_line() -> None:
-    sys.stdout.write("\r")
-    sys.stdout.write(" " * 120)
-    sys.stdout.write("\r")
-    sys.stdout.flush()
 
 def spinner(message: str) -> _Spinner:
-    """Return an async spinner context manager."""
+    """Return a compatibility context manager for progress logging."""
     return _Spinner(message)
+
 
 def set_log_profile(profile: str) -> None:
     """Adjust console logging verbosity at runtime."""
@@ -362,7 +232,6 @@ def set_log_profile(profile: str) -> None:
         if isinstance(handler, logging.StreamHandler):
             handler.setLevel(level)
 
-    global LOG_PROFILE
     LOG_PROFILE = profile
     os.environ["LOG_PROFILE"] = profile
 
