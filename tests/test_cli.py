@@ -6,6 +6,7 @@ import os
 import json
 import subprocess
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from always_attend.runtime_contract import get_runtime_paths_dict
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_VERSION = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 
 
 class CliEntrypointTests(unittest.TestCase):
@@ -52,7 +54,7 @@ class CliEntrypointTests(unittest.TestCase):
     def test_version_flag(self) -> None:
         result = self.run_command(sys.executable, "-m", "always_attend", "--version")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("always-attend 0.1.2", result.stdout.strip())
+        self.assertIn(f"always-attend {PROJECT_VERSION}", result.stdout.strip())
 
     def test_paths_builtin_json(self) -> None:
         result = self.run_command(sys.executable, "-m", "always_attend", "paths", "--json")
