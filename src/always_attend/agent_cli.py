@@ -268,10 +268,24 @@ def _target_required_payload(command: str) -> dict[str, Any]:
 
 
 def _parse_sources(csv_text: str | None, explicit_sources: list[str] | None = None) -> list[str]:
-    if explicit_sources:
-        return [item.lower() for item in explicit_sources if item and item.lower() != "attendance"]
-    values = [item.strip().lower() for item in (csv_text or "").split(",")]
-    return [item for item in values if item and item != "attendance"]
+    raw_values = explicit_sources if explicit_sources else (csv_text or "").split(",")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        value = _normalize_source_name(raw_value)
+        if not value or value == "attendance" or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _normalize_source_name(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    aliases = {
+        "gws": "gmail",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def _requested_sources(explicit_sources: list[str] | None = None, csv_text: str | None = None) -> list[str]:

@@ -152,6 +152,7 @@ class SessionManager:
         return [
             self._command_status("okta", ("okta",)),
             self._python_module_status("playwright", "playwright"),
+            self._command_status("gmail", ("gmail-cli", "gmail", "gws"), optional=True),
             self._command_status("moodle-cli", ("moodle-cli", "moodle")),
             self._command_status("edstem", ("edstem-cli", "edstem")),
             self._command_status("gogcli", ("gogcli", "gog")),
@@ -190,17 +191,17 @@ class SessionManager:
         return target_url
 
     @staticmethod
-    def _command_status(name: str, commands: tuple[str, ...]) -> DependencyStatus:
+    def _command_status(name: str, commands: tuple[str, ...], *, optional: bool = False) -> DependencyStatus:
         for command in commands:
             resolved = shutil.which(command)
             if resolved:
-                return DependencyStatus(name=name, status="ok", details=resolved)
+                return DependencyStatus(name=name, status="ok", details=resolved, optional=optional)
         return DependencyStatus(
             name=name,
             status="missing",
             details=f"Tried: {', '.join(commands)}",
             install_hint=_install_hint_for(name),
-            optional=(name == "gogcli"),
+            optional=optional or (name == "gogcli"),
         )
 
     @staticmethod
@@ -220,6 +221,7 @@ class SessionManager:
 def _install_hint_for(name: str) -> str | None:
     hints = {
         "okta": "uv tool install okta-auth-cli",
+        "gmail": "Install gmail-cli or gws and make sure it is available on PATH.",
         "moodle-cli": "uv tool install moodle-cli",
         "edstem": "uv tool install edstem-cli",
         "gogcli": "Install the required GOG CLI plugin or add it to PATH before rerunning attend.",

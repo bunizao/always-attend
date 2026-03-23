@@ -99,6 +99,19 @@ class SessionManagerTests(unittest.TestCase):
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["mode"], "browser_cookie_import")
 
+    def test_doctor_marks_gmail_dependency_optional(self) -> None:
+        manager = SessionManager()
+        with patch(
+            "always_attend.session_manager.shutil.which",
+            side_effect=lambda command: "/opt/homebrew/bin/gws" if command == "gws" else None,
+        ), patch("always_attend.session_manager.importlib.util.find_spec", return_value=SimpleNamespace(origin="playwright")):
+            checks = {item.name: item for item in manager.doctor()}
+
+        self.assertIn("gmail", checks)
+        self.assertEqual(checks["gmail"].status, "ok")
+        self.assertTrue(checks["gmail"].optional)
+        self.assertEqual(checks["gmail"].details, "/opt/homebrew/bin/gws")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -335,6 +335,12 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(_requested_sources(csv_text="attendance"), [])
         self.assertEqual(_requested_sources(explicit_sources=["attendance"]), [])
 
+    def test_requested_sources_normalize_gws_alias_to_gmail(self) -> None:
+        from always_attend.agent_cli import _requested_sources
+
+        self.assertEqual(_requested_sources(csv_text="attendance,gws,moodle,gmail"), ["gmail", "moodle"])
+        self.assertEqual(_requested_sources(explicit_sources=["gws", "edstem"]), ["gmail", "edstem"])
+
     def test_handoff_command_returns_artifacts(self) -> None:
         async_payload = {
             "status": "ok",
