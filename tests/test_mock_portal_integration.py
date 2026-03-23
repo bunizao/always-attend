@@ -68,7 +68,16 @@ class MockPortalIntegrationTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
-        return json.loads(result.stdout)
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            self.fail(
+                "Expected JSON output from attend command.\n"
+                f"Args: {args}\n"
+                f"STDOUT:\n{result.stdout}\n"
+                f"STDERR:\n{result.stderr}\n"
+                f"Decode error: {exc}"
+            )
 
     def _reset_mock(self) -> None:
         request = Request(f"http://127.0.0.1:{self.port}/mock/reset", method="POST")
