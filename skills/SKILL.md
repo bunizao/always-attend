@@ -53,6 +53,35 @@ For every run, follow this order:
 6. Run the requested inspect, handoff, match, submit, or run command
 7. Summarize the outcome in user language
 
+### Final Goal
+
+The goal is simple:
+fill every attendance item that is actually open on the attendance site.
+
+Use every available source and every reasonable method to reach that goal:
+
+- attendance DOM state
+- Moodle
+- Ed
+- Gmail
+- text evidence
+- image evidence
+- direct manual reasoning over the handoff payload
+- direct browser interaction when needed
+
+Do not stop at the first weak `match` result.
+If the automatic match is noisy, keep digging through the source artifacts yourself.
+
+### Practical Rules
+
+- Treat the attendance site DOM as the source of truth for what is fillable
+- Treat `match` as a helper, not the final decision maker
+- Prefer explicit attendance-code evidence over generic titles or labels
+- Prefer short code-shaped tokens when the evidence suggests a real attendance code
+- Prefer Moodle forum posts and image tables when they contain the actual session codes
+- If one source is weak, keep searching other sources before giving up
+- If the available CLI output is not enough, use the browser directly to inspect the relevant page
+
 ### Feedback Rules
 
 The agent must always tell the user:
@@ -80,6 +109,18 @@ Use this response pattern:
    Tell the user which command is running and why.
 5. Outcome summary
    Group the result into submitted, unresolved, rejected, locked, and next action.
+
+### Submission Policy
+
+Before any real submit:
+
+1. Build the best plan you can for all currently open items
+2. Run `attend submit --plan ... --dry-run --json`
+3. Check that the dry run aligns with the intended course, slot, and week
+4. Run the real submit command
+5. After submit, re-read the DOM or run `attend report --json`
+
+If some items are still unresolved, submit the ones you are confident about and keep working on the rest.
 
 ### Required Wording Intent
 
@@ -206,3 +247,5 @@ Summarize:
 - Do not hide unresolved items; they are part of the output
 - Do not silently switch to demo mode when a real attendance URL is required
 - Do not leave the user without a plain-language summary of failures and next actions
+- Do not treat generic uppercase text extracted by the parser as a real attendance code without checking context
+- Do not give up after one weak source if other sources are still available
