@@ -25,7 +25,7 @@ else:
     try:
         __version__ = version("always-attend")
     except PackageNotFoundError:
-        __version__ = "0.1.2"
+        __version__ = "0.2.0a0"
 
 from always_attend.runtime_contract import (  # noqa: E402
     RUNTIME_CONTRACT_VERSION,
