@@ -165,8 +165,10 @@ That command returns a schema-valid demo payload so the workflow can still be va
 
 The handoff payload contains:
 
+- `decision_packet`: the canonical evidence bundle for agent planning
 - `open_items`: attendance-site items that are actually fillable
 - `candidate_hints`: text-derived candidate codes
+- `matches`: structured local matches and evidence references
 - `artifacts`: source payload summaries with:
   - `image_urls`
   - `text_snippets`
@@ -194,16 +196,24 @@ Write a JSON plan in this shape:
 ```json
 [
   {
+    "item_id": "FIT2099:visible:0:Workshop 01",
     "course_code": "FIT2099",
     "week": 7,
     "slot": "Workshop 01",
-    "code": "ABCDE"
+    "code": "ABCDE",
+    "confidence": 0.97,
+    "matched_fields": ["course_code", "class_type", "date", "time_range", "group"],
+    "reason": "Strong five-field match.",
+    "evidence_refs": ["$.threads[0].body"],
+    "source": "edstem"
   }
 ]
 ```
 
 Rules:
 
+- `course_code`, `week`, `slot`, and `code` are required
+- `item_id`, `confidence`, `matched_fields`, `reason`, `evidence_refs`, and `source` are strongly preferred when available
 - Only include items you believe are strong enough to submit
 - If evidence is ambiguous, leave the item out and report it as unresolved
 - Keep slot labels aligned with the attendance-site item, not the source wording

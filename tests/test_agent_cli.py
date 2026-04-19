@@ -60,6 +60,39 @@ class AgentCliTests(unittest.TestCase):
             self.assertEqual(payload["data"]["entry_count"], 2)
             self.assertTrue(output_path.exists())
 
+    def test_resolve_preserves_agent_plan_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plan_path = Path(temp_dir) / "plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "item_id": "FIT2099:visible:0:Workshop 01",
+                            "course_code": "FIT2099",
+                            "week": 7,
+                            "slot": "Workshop 01",
+                            "code": "ABCDE",
+                            "confidence": 0.93,
+                            "matched_fields": ["course_code", "group"],
+                            "reason": "Strong evidence from Ed.",
+                            "evidence_refs": ["$.threads[0].body"],
+                            "source": "edstem",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            exit_code, payload = self.run_agent_command(["resolve", "--plan", str(plan_path), "--json"])
+
+        self.assertEqual(exit_code, 0)
+        entry = payload["data"]["courses"][0]["entries"][0]
+        self.assertEqual(entry["item_id"], "FIT2099:visible:0:Workshop 01")
+        self.assertEqual(entry["confidence"], 0.93)
+        self.assertEqual(entry["matched_fields"], ["course_code", "group"])
+        self.assertEqual(entry["evidence_refs"], ["$.threads[0].body"])
+        self.assertEqual(entry["source"], "edstem")
+
     def test_submit_plan_materializes_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -263,6 +296,7 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "run")
         self.assertIn("summary", payload)
         self.assertEqual(payload["data"]["items"][0]["course_code"], "FIT2099")
+        self.assertIn("decision_packet", payload["data"])
 
     def test_run_dry_run_without_target_falls_back_to_demo(self) -> None:
         exit_code, payload = self.run_agent_command(["run", "--dry-run", "--json"])
@@ -370,6 +404,8 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "handoff")
         self.assertIn("plan_contract", payload["data"])
         self.assertEqual(payload["data"]["open_items"][0]["course_code"], "FIT2099")
+        self.assertEqual(payload["data"]["decision_packet"]["schema_version"], "1")
+        self.assertIn("evidence_refs", payload["data"]["decision_packet"]["plan_contract"]["recommended_fields"])
 
     def test_handoff_missing_session_returns_next_action(self) -> None:
         with patch(

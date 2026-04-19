@@ -106,6 +106,8 @@ def build_report(
         payload["next_action"] = next_action
         payload["explanation"] = explanation
         payload["recommended_sources"] = _recommended_sources(match, attempt)
+        if match is not None and match.evidence_refs:
+            payload["evidence_refs"] = match.evidence_refs
         unresolved.append(payload)
 
     actionable_rejected: list[dict[str, Any]] = []

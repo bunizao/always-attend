@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,11 @@ class SubmissionPlanEntry:
     week: int
     slot: str
     code: str
+    item_id: str | None = None
+    confidence: float | None = None
+    matched_fields: list[str] = field(default_factory=list)
+    reason: str | None = None
+    evidence_refs: list[str] = field(default_factory=list)
     source: str | None = None
 
 
@@ -42,20 +47,55 @@ def _require_week(value: Any) -> int:
     return week
 
 
+def _normalize_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise SubmissionPlanError("Invalid field 'confidence'.") from exc
+
+
 def _entry_from_payload(payload: dict[str, Any], *, course_code: str | None = None, week: int | None = None) -> SubmissionPlanEntry:
     resolved_course = _require_text(payload.get("course_code") or course_code, field_name="course_code")
     resolved_week = _require_week(payload.get("week", week))
     slot = _require_text(payload.get("slot"), field_name="slot")
     code = _require_text(payload.get("code"), field_name="code")
+    item_id_raw = payload.get("item_id")
+    item_id = str(item_id_raw).strip() if item_id_raw is not None else None
+    if not item_id:
+        item_id = None
+    confidence = _optional_float(payload.get("confidence"))
+    matched_fields = _normalize_text_list(payload.get("matched_fields"))
+    reason_raw = payload.get("reason")
+    reason = str(reason_raw).strip() if reason_raw is not None else None
+    if not reason:
+        reason = None
+    evidence_refs = _normalize_text_list(payload.get("evidence_refs"))
     raw_source = payload.get("source")
     source = str(raw_source).strip() if raw_source is not None else None
     if not source:
         source = None
     return SubmissionPlanEntry(
+        item_id=item_id,
         course_code=resolved_course,
         week=resolved_week,
         slot=slot,
         code=code,
+        confidence=confidence,
+        matched_fields=matched_fields,
+        reason=reason,
+        evidence_refs=evidence_refs,
         source=source,
     )
 

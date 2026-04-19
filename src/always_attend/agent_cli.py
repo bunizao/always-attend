@@ -14,6 +14,7 @@ from typing import Any
 
 from always_attend import __version__
 from always_attend.agent_protocol import AttendanceStateItem, CandidateRecord, MatchResult, SourceArtifact, SubmissionAttempt, TraceEvent
+from always_attend.ai_handoff import build_decision_packet
 from always_attend.attendance_state_reader import AttendanceStateReader
 from always_attend.matcher import match_open_items
 from always_attend.okta_client import OktaCliError, OktaClient
@@ -370,57 +371,97 @@ def _session_missing_payload(command: str, target: str, error: str) -> dict[str,
     }
 
 
+def _decision_packet_payload(
+    *,
+    target: str,
+    sources: list[str],
+    items: list[AttendanceStateItem],
+    candidates: list[CandidateRecord],
+    artifacts: list[SourceArtifact],
+    matches: list[MatchResult],
+    trace: list[TraceEvent],
+    requested_week: int | None = None,
+) -> dict[str, Any]:
+    open_items = [item for item in items if item.dom_state == "open"]
+    return build_decision_packet(
+        target=target,
+        source_priority=sources,
+        open_items=open_items,
+        candidate_hints=candidates,
+        artifacts=artifacts,
+        matches=matches,
+        trace=trace,
+        requested_week=requested_week,
+    ).to_dict()
+
+
+def _handoff_data_payload(
+    *,
+    target: str,
+    sources: list[str],
+    items: list[AttendanceStateItem],
+    candidates: list[CandidateRecord],
+    artifacts: list[SourceArtifact],
+    matches: list[MatchResult],
+    trace: list[TraceEvent],
+    requested_week: int | None = None,
+) -> dict[str, Any]:
+    decision_packet = _decision_packet_payload(
+        target=target,
+        sources=sources,
+        items=items,
+        candidates=candidates,
+        artifacts=artifacts,
+        matches=matches,
+        trace=trace,
+        requested_week=requested_week,
+    )
+    return {
+        "target": target,
+        "source_priority": sources,
+        "decision_packet": decision_packet,
+        "open_items": decision_packet["open_items"],
+        "candidate_hints": decision_packet["candidate_hints"],
+        "artifacts": decision_packet["artifacts"],
+        "matches": decision_packet["matches"],
+        "plan_contract": decision_packet["plan_contract"],
+        "instructions": decision_packet["instructions"],
+        "trace": decision_packet["trace"],
+    }
+
+
 def _demo_handoff_payload(target: str) -> dict[str, Any]:
+    resolved_target = target or "https://attendance.example.edu/student/"
+    items, trace = _demo_state_items()
+    candidates = _demo_candidates()
+    matches = _demo_matches()
+    artifacts = [
+        SourceArtifact(
+            source="edstem",
+            command=["edstem", "threads", "30595", "--json"],
+            course_codes=["FIT2099"],
+            week_hints=[7],
+            group_hints=["A1"],
+            artifact_kind="mixed",
+            image_urls=["https://example.test/code.png"],
+            text_snippets=["FIT2099 Week 7 Workshop Group A1 code is shown in the linked image."],
+            notes=["Demo payload for first-time agent validation."],
+        )
+    ]
     return {
         "status": "ok",
         "command": "handoff",
         "message": "Demo AI handoff package generated.",
-        "data": {
-            "target": target or "https://attendance.example.edu/student/",
-            "source_priority": _requested_sources(csv_text=_default_sources()),
-            "open_items": [
-                {
-                    "course_code": "FIT2099",
-                    "slot_label": "Workshop 01",
-                    "class_type": "workshop",
-                    "date": "2026-03-17",
-                    "time_range": "10:00-12:00",
-                    "group": "A1",
-                }
-            ],
-            "candidate_hints": [],
-            "artifacts": [
-                {
-                    "source": "edstem",
-                    "command": ["edstem", "threads", "30595", "--json"],
-                    "course_codes": ["FIT2099"],
-                    "week_hints": [7],
-                    "group_hints": ["A1"],
-                    "artifact_kind": "mixed",
-                    "image_urls": ["https://example.test/code.png"],
-                    "text_snippets": ["FIT2099 Week 7 Workshop Group A1 code is shown in the linked image."],
-                    "notes": ["Demo payload for first-time agent validation."],
-                }
-            ],
-            "plan_contract": {
-                "required_fields": ["course_code", "week", "slot", "code"],
-                "shape": [
-                    {
-                        "course_code": "FIT2099",
-                        "week": 7,
-                        "slot": "Workshop 01",
-                        "code": "ABCDE",
-                    }
-                ],
-            },
-            "instructions": [
-                "Treat open_items from the attendance site as the source of truth.",
-                "Use text snippets and image_urls from artifacts as evidence for multimodal analysis.",
-                "Infer the most likely attendance codes from source evidence, then write a JSON plan with course_code, week, slot, and code.",
-                "Pass that plan to attend submit --plan ... --json or continue with attend report for review.",
-            ],
-            "trace": [],
-        },
+        "data": _handoff_data_payload(
+            target=resolved_target,
+            sources=_requested_sources(csv_text=_default_sources()),
+            items=items,
+            candidates=candidates,
+            artifacts=artifacts,
+            matches=matches,
+            trace=trace,
+            requested_week=7,
+        ),
         "exit_code": 0,
     }
 
@@ -465,6 +506,7 @@ def _demo_matches() -> list[MatchResult]:
             matched_fields=["course_code", "class_type", "date", "time_range", "group"],
             conflicting_fields=[],
             source="edstem",
+            evidence_refs=["$.artifacts[0].text_snippets[0]"],
             class_type="workshop",
             date="2026-03-17",
             time_range="10:00-12:00",
@@ -559,23 +601,26 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
         candidates = _demo_candidates()
         matches = _demo_matches()
         attempts = _demo_attempts()
+        handoff_data = _demo_handoff_payload(args.target).get("data", {})
         report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
         report["command"] = "run"
         report["message"] = "Demo AI-native attendance run completed."
         report["data"] = {
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in candidates],
-            "artifacts": _demo_handoff_payload(args.target).get("data", {}).get("artifacts", []),
+            "artifacts": handoff_data.get("artifacts", []),
             "matches": [item.to_dict() for item in matches],
             "attempts": [item.to_dict() for item in attempts],
+            "decision_packet": handoff_data.get("decision_packet"),
         }
         report["exit_code"] = 0
         return report
     target = _require_target(args.target)
+    sources = _parse_sources(args.sources)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
-        sources=_parse_sources(args.sources),
+        sources=sources,
         week=args.week,
         courses=args.course,
     )
@@ -608,6 +653,16 @@ async def _pipeline_run(args: argparse.Namespace) -> dict[str, Any]:
         "artifacts": [item.to_dict() for item in artifacts],
         "matches": [item.to_dict() for item in matches],
         "attempts": [item.to_dict() for item in attempts],
+        "decision_packet": _decision_packet_payload(
+            target=target,
+            sources=sources,
+            items=final_items,
+            candidates=candidates,
+            artifacts=artifacts,
+            matches=matches,
+            trace=trace,
+            requested_week=args.week,
+        ),
     }
     report["exit_code"] = exit_code_for_report(report)
     return report
@@ -756,37 +811,22 @@ async def _handle_handoff(args: argparse.Namespace) -> dict[str, Any]:
         explicit_courses=args.course,
     )
     trace.extend(collect_trace)
-    open_items = [item.to_dict() for item in items if item.dom_state == "open"]
+    data = _handoff_data_payload(
+        target=target,
+        sources=requested_sources,
+        items=items,
+        candidates=candidates,
+        artifacts=artifacts,
+        matches=[],
+        trace=trace,
+        requested_week=args.week,
+    )
     return {
         "status": "ok",
         "command": "handoff",
         "message": "AI handoff package generated.",
-        "data": {
-            "target": target,
-            "source_priority": requested_sources,
-            "open_items": open_items,
-            "candidate_hints": [item.to_dict() for item in candidates],
-            "artifacts": [item.to_dict() for item in artifacts],
-            "plan_contract": {
-                "required_fields": ["course_code", "week", "slot", "code"],
-                "shape": [
-                    {
-                        "course_code": "FIT2099",
-                        "week": 7,
-                        "slot": "Workshop 01",
-                        "code": "ABCDE",
-                    }
-                ],
-            },
-            "instructions": [
-                "Treat open_items from the attendance site as the source of truth.",
-                "Use text snippets and image_urls from artifacts as evidence for multimodal analysis.",
-                "Infer the most likely attendance codes from source evidence, then write a JSON plan with course_code, week, slot, and code.",
-                "Pass that plan to attend submit --plan ... --json or continue with attend report for review.",
-            ],
-            "trace": [item.to_dict() for item in trace],
-        },
-        "exit_code": 0 if open_items else 4,
+        "data": data,
+        "exit_code": 0 if data["open_items"] else 4,
     }
 
 
@@ -795,6 +835,7 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
         items, trace = _demo_state_items()
         matches = _demo_matches()
         candidates = _demo_candidates()
+        handoff_data = _demo_handoff_payload(args.target).get("data", {})
         return {
             "status": "ok",
             "command": "match",
@@ -802,17 +843,19 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
             "data": {
                 "items": [item.to_dict() for item in items],
                 "candidates": [item.to_dict() for item in candidates],
-                "artifacts": _demo_handoff_payload(args.target).get("data", {}).get("artifacts", []),
+                "artifacts": handoff_data.get("artifacts", []),
                 "matches": [item.to_dict() for item in matches],
                 "trace": [item.to_dict() for item in trace],
+                "decision_packet": handoff_data.get("decision_packet"),
             },
             "exit_code": 0,
         }
     target = _require_target(args.target)
+    sources = _parse_sources(args.sources)
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
-        sources=_parse_sources(args.sources),
+        sources=sources,
         week=args.week,
         courses=args.course,
     )
@@ -827,6 +870,16 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
             "artifacts": [item.to_dict() for item in artifacts],
             "matches": [item.to_dict() for item in matches],
             "trace": [item.to_dict() for item in trace],
+            "decision_packet": _decision_packet_payload(
+                target=target,
+                sources=sources,
+                items=items,
+                candidates=candidates,
+                artifacts=artifacts,
+                matches=matches,
+                trace=trace,
+                requested_week=args.week,
+            ),
         },
         "exit_code": 0 if matches else 4,
     }
@@ -835,15 +888,20 @@ async def _handle_match(args: argparse.Namespace) -> dict[str, Any]:
 async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
     if args.demo:
         items, trace = _demo_state_items()
+        candidates = _demo_candidates()
         matches = _demo_matches()
         attempts = _demo_attempts()
+        handoff_data = _demo_handoff_payload(args.target).get("data", {})
         report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
         report["command"] = "submit"
         report["message"] = "Demo submit stage completed."
         report["data"] = {
             "items": [item.to_dict() for item in items],
+            "candidates": [item.to_dict() for item in candidates],
+            "artifacts": handoff_data.get("artifacts", []),
             "matches": [item.to_dict() for item in matches],
             "attempts": [item.to_dict() for item in attempts],
+            "decision_packet": handoff_data.get("decision_packet"),
         }
         report["exit_code"] = 0
         return report
@@ -893,13 +951,26 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
         items = [_item_from_dict(item) for item in payload.get("items", [])]
         matches = [_match_from_dict(item) for item in payload.get("matches", [])]
         trace = [_event_from_dict(item) for item in payload.get("trace", [])]
+        candidates: list[CandidateRecord] = []
+        artifacts: list[SourceArtifact] = []
+        decision_packet = payload.get("decision_packet")
     else:
-        items, _, _, matches, trace = await _pipeline_match(
+        items, candidates, artifacts, matches, trace = await _pipeline_match(
             target=target,
             headed=args.headed,
             sources=_requested_sources(csv_text=_default_sources()),
             week=None,
             courses=[],
+        )
+        decision_packet = _decision_packet_payload(
+            target=target,
+            sources=_requested_sources(csv_text=_default_sources()),
+            items=items,
+            candidates=candidates,
+            artifacts=artifacts,
+            matches=matches,
+            trace=trace,
+            requested_week=None,
         )
     attempts, submit_trace = await Submitter().submit(
         target_url=target,
@@ -921,8 +992,11 @@ async def _handle_submit(args: argparse.Namespace) -> dict[str, Any]:
     report["data"] = {
         "target": target,
         "items": [item.to_dict() for item in final_items],
+        "candidates": [item.to_dict() for item in candidates],
+        "artifacts": [item.to_dict() for item in artifacts],
         "matches": [item.to_dict() for item in matches],
         "attempts": [item.to_dict() for item in attempts],
+        "decision_packet": decision_packet,
     }
     report["exit_code"] = exit_code_for_report(report)
     return report
@@ -933,15 +1007,17 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
         items, trace = _demo_state_items()
         matches = _demo_matches()
         attempts = _demo_attempts()
+        handoff_data = _demo_handoff_payload(args.target).get("data", {})
         report = build_report(items=items, matches=matches, attempts=attempts, trace=trace)
         report["command"] = "report"
         report["message"] = "Demo structured report generated."
         report["data"] = {
             "items": [item.to_dict() for item in items],
             "candidates": [item.to_dict() for item in _demo_candidates()],
-            "artifacts": _demo_handoff_payload(args.target).get("data", {}).get("artifacts", []),
+            "artifacts": handoff_data.get("artifacts", []),
             "matches": [item.to_dict() for item in matches],
             "attempts": [item.to_dict() for item in attempts],
+            "decision_packet": handoff_data.get("decision_packet"),
         }
         report["exit_code"] = 0
         return report
@@ -963,10 +1039,11 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
         return report
 
     target = _require_target(args.target)
+    sources = _requested_sources(args.source, _default_sources())
     items, candidates, artifacts, matches, trace = await _pipeline_match(
         target=target,
         headed=args.headed,
-        sources=_requested_sources(args.source, _default_sources()),
+        sources=sources,
         week=args.week,
         courses=args.course,
     )
@@ -979,6 +1056,16 @@ async def _handle_report(args: argparse.Namespace) -> dict[str, Any]:
         "candidates": [item.to_dict() for item in candidates],
         "artifacts": [item.to_dict() for item in artifacts],
         "matches": [item.to_dict() for item in matches],
+        "decision_packet": _decision_packet_payload(
+            target=target,
+            sources=sources,
+            items=items,
+            candidates=candidates,
+            artifacts=artifacts,
+            matches=matches,
+            trace=trace,
+            requested_week=args.week,
+        ),
     }
     report["exit_code"] = exit_code_for_report(report)
     return report

@@ -34,6 +34,7 @@ class ReporterTests(unittest.TestCase):
             matched_fields=["course_code", "class_type"],
             conflicting_fields=["group"],
             source="edstem",
+            evidence_refs=["$.threads[0].body"],
             class_type="workshop",
             date=None,
             time_range=None,
@@ -50,6 +51,7 @@ class ReporterTests(unittest.TestCase):
         unresolved = report["summary"]["open_unresolved"][0]
         self.assertEqual(unresolved["next_action"], "review_source_evidence")
         self.assertIn("edstem", unresolved["recommended_sources"])
+        self.assertEqual(unresolved["evidence_refs"], ["$.threads[0].body"])
 
     def test_rejected_attempts_preserve_actionable_reason(self) -> None:
         item = AttendanceStateItem(

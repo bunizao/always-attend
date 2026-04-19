@@ -6,7 +6,7 @@ import re
 from html.parser import HTMLParser
 from typing import Any
 
-from always_attend.agent_protocol import SourceArtifact
+from always_attend.agent_protocol import AttendanceStateItem, CandidateRecord, DecisionPacket, MatchResult, SourceArtifact, TraceEvent
 
 
 COURSE_RE = re.compile(r"\b[A-Z]{3}\d{4}\b")
@@ -174,4 +174,78 @@ def build_source_artifact(
         image_urls=image_urls,
         text_snippets=snippets,
         notes=notes,
+    )
+
+
+def _plan_contract(
+    *,
+    open_items: list[AttendanceStateItem],
+    matches: list[MatchResult],
+    requested_week: int | None,
+) -> dict[str, Any]:
+    sample: dict[str, Any] = {
+        "course_code": open_items[0].course_code if open_items else "COURSE_CODE",
+        "week": requested_week if requested_week is not None else "WEEK",
+        "slot": open_items[0].slot_label if open_items else "SLOT",
+        "code": "ABCDE",
+    }
+    if open_items:
+        sample["item_id"] = open_items[0].item_id
+    if open_items:
+        match = next((item for item in matches if item.item_id == open_items[0].item_id and item.candidate_code), None)
+        if match is not None:
+            sample["confidence"] = match.confidence
+            sample["matched_fields"] = match.matched_fields
+            sample["reason"] = match.reason
+            sample["source"] = match.source
+            if match.evidence_refs:
+                sample["evidence_refs"] = match.evidence_refs
+
+    return {
+        "required_fields": ["course_code", "week", "slot", "code"],
+        "recommended_fields": ["item_id", "confidence", "matched_fields", "reason", "evidence_refs", "source"],
+        "accepted_shapes": [
+            "list of entry objects",
+            "object with an entries list",
+            "object with a courses list",
+        ],
+        "sample_entry": sample,
+        "rules": [
+            "Only include open items that are strong enough to submit.",
+            "Prefer evidence-backed metadata over guesswork.",
+            "Keep slot labels aligned to the attendance site, not the source wording.",
+            "Leave out unresolved items instead of inventing a code.",
+        ],
+    }
+
+
+def build_decision_packet(
+    *,
+    target: str,
+    source_priority: list[str],
+    open_items: list[AttendanceStateItem],
+    candidate_hints: list[CandidateRecord],
+    artifacts: list[SourceArtifact],
+    matches: list[MatchResult],
+    trace: list[TraceEvent],
+    requested_week: int | None = None,
+) -> DecisionPacket:
+    """Build the structured packet an AI agent should use for planning."""
+    return DecisionPacket(
+        schema_version="1",
+        target=target,
+        source_priority=source_priority,
+        open_items=open_items,
+        candidate_hints=candidate_hints,
+        artifacts=artifacts,
+        matches=matches,
+        plan_contract=_plan_contract(open_items=open_items, matches=matches, requested_week=requested_week),
+        instructions=[
+            "Treat open_items as the source of truth for what is fillable.",
+            "Use artifacts and candidate_hints as evidence, not as final truth.",
+            "Prefer evidence-backed optional metadata when available.",
+            "Leave out low-confidence items instead of guessing.",
+            "Return a JSON plan that satisfies the plan_contract before calling submit.",
+        ],
+        trace=trace,
     )

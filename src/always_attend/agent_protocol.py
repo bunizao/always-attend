@@ -96,6 +96,26 @@ class SourceArtifact:
 
 
 @dataclass(frozen=True)
+class DecisionPacket:
+    """Structured evidence bundle consumed by an AI agent."""
+
+    schema_version: str
+    target: str
+    source_priority: list[str]
+    open_items: list[AttendanceStateItem]
+    candidate_hints: list[CandidateRecord]
+    artifacts: list[SourceArtifact]
+    matches: list["MatchResult"]
+    plan_contract: dict[str, Any]
+    instructions: list[str]
+    trace: list[TraceEvent]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly decision packet payload."""
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MatchResult:
     """Best candidate chosen for an open attendance item."""
 
@@ -108,6 +128,7 @@ class MatchResult:
     matched_fields: list[str]
     conflicting_fields: list[str]
     source: str | None
+    evidence_refs: list[str] = field(default_factory=list)
     class_type: str | None = None
     date: str | None = None
     time_range: str | None = None
