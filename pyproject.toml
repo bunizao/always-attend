@@ -50,9 +50,6 @@ attend = "always_attend.cli:main"
 [tool.setuptools]
 package-dir = { "" = "src" }
 
-[tool.setuptools.package-data]
-always_attend = ["skills/SKILL.md", "skills/BOOTSTRAP.md"]
-
 [tool.setuptools.packages.find]
 where = ["src"]
 include = [

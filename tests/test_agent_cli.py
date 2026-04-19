@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -181,85 +182,68 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "doctor")
         self.assertTrue(payload["data"]["ready"])
 
-    def test_skills_list_reports_bundled_skills(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            exit_code, payload = self.run_agent_command(["skills", "list", "--dest", temp_dir, "--json"])
+    def test_skills_list_proxies_to_npx(self) -> None:
+        with patch("always_attend.skills_proxy.shutil.which", return_value="/opt/homebrew/bin/npx"), patch(
+            "always_attend.skills_proxy.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["npx", "skills", "list", "--json"],
+                returncode=0,
+                stdout='[{"name":"attend-agent-workflow"}]',
+                stderr="",
+            ),
+        ):
+            exit_code, payload = self.run_agent_command(["skills", "list", "--json"])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["command"], "skills.list")
-        self.assertEqual(payload["data"]["skills"][0]["name"], "attend-agent-workflow")
-        self.assertFalse(payload["data"]["skills"][0]["installed"])
-        self.assertIn("agent_skill_dirs", payload["data"])
+        self.assertEqual(payload["data"]["payload"][0]["name"], "attend-agent-workflow")
+        self.assertEqual(payload["data"]["proxied_command"][:3], ["/opt/homebrew/bin/npx", "skills", "list"])
 
-    def test_skills_install_writes_skill_tree(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as agent_dir:
+    def test_skills_add_proxies_default_source_to_npx(self) -> None:
+        with patch("always_attend.skills_proxy.shutil.which", return_value="/opt/homebrew/bin/npx"), patch(
+            "always_attend.skills_proxy.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["npx", "skills", "add", "/tmp/skills"],
+                returncode=0,
+                stdout="installed",
+                stderr="",
+            ),
+        ):
             exit_code, payload = self.run_agent_command(
-                ["skills", "install", "--dest", temp_dir, "--agent-dir", agent_dir, "--json"]
+                ["skills", "add", "--agent", "codex", "--skill", "attend-agent-workflow", "--json"]
             )
 
-            installed_dir = Path(payload["data"]["installed"][0])
-            skill_file = installed_dir / "SKILL.md"
-            bootstrap_file = installed_dir / "BOOTSTRAP.md"
-            self.assertTrue(skill_file.exists())
-            self.assertTrue(bootstrap_file.exists())
-            self.assertIn("attend handoff --json", skill_file.read_text(encoding="utf-8"))
-            self.assertIn("Read `BOOTSTRAP.md` only when", skill_file.read_text(encoding="utf-8"))
-            self.assertIn("uv tool install always-attend", bootstrap_file.read_text(encoding="utf-8"))
-            link_path = Path(agent_dir) / "attend-agent-workflow"
-            self.assertTrue(link_path.is_symlink())
-            self.assertEqual(link_path.resolve(), installed_dir.resolve())
-            self.assertEqual(payload["data"]["agent_links"][0]["status"], "linked")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "skills.add")
+        self.assertEqual(payload["data"]["proxied_command"][:3], ["/opt/homebrew/bin/npx", "skills", "add"])
+        self.assertTrue(payload["data"]["proxied_command"][3].endswith("/skills"))
+        self.assertEqual(payload["data"]["proxied_command"][4], "--full-depth")
+        self.assertIn("--agent", payload["data"]["proxied_command"])
+        self.assertIn("--skill", payload["data"]["proxied_command"])
+
+    def test_skills_install_alias_maps_to_add(self) -> None:
+        with patch("always_attend.skills_proxy.shutil.which", return_value="/opt/homebrew/bin/npx"), patch(
+            "always_attend.skills_proxy.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["npx", "skills", "add", "bunizao/always-attend"],
+                returncode=0,
+                stdout="installed",
+                stderr="",
+            ),
+        ):
+            exit_code, payload = self.run_agent_command(["skills", "install", "--json"])
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["command"], "skills.install")
+        self.assertEqual(payload["command"], "skills.add")
+        self.assertTrue(payload["data"]["deprecated_alias"])
 
-    def test_repo_skill_markdown_matches_packaged_skill_markdown(self) -> None:
-        repo_skill = Path("skills/SKILL.md").read_text(encoding="utf-8")
-        packaged_skill = Path("src/always_attend/skills/SKILL.md").read_text(encoding="utf-8")
-        repo_bootstrap = Path("skills/BOOTSTRAP.md").read_text(encoding="utf-8")
-        packaged_bootstrap = Path("src/always_attend/skills/BOOTSTRAP.md").read_text(encoding="utf-8")
-
-        self.assertEqual(repo_skill, packaged_skill)
-        self.assertEqual(repo_bootstrap, packaged_bootstrap)
-        self.assertIn("Read `BOOTSTRAP.md` only when", repo_skill)
-        self.assertIn("python3 --version", repo_bootstrap)
-        self.assertIn("playwright install chromium", repo_bootstrap)
-        self.assertIn("attend auth login <attendance-url> --json", repo_bootstrap)
-
-    def test_skills_install_existing_path_requires_force(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            skill_dir = Path(temp_dir) / "attend-agent-workflow"
-            skill_dir.mkdir(parents=True)
-            (skill_dir / "SKILL.md").write_text("old", encoding="utf-8")
-
-            exit_code, payload = self.run_agent_command(["skills", "install", "--dest", temp_dir, "--json"])
+    def test_skills_proxy_reports_missing_npx(self) -> None:
+        with patch("always_attend.skills_proxy.shutil.which", return_value=None):
+            exit_code, payload = self.run_agent_command(["skills", "add", "--json"])
 
         self.assertEqual(exit_code, 1)
-        self.assertEqual(payload["command"], "skills")
-        self.assertIn("Use --force to overwrite", payload["error"])
-
-    def test_skills_install_uses_attend_skills_dir_override(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as agent_dir, patch.dict(
-            "os.environ", {"ATTEND_SKILLS_DIR": temp_dir}, clear=False
-        ):
-            exit_code, payload = self.run_agent_command(["skills", "install", "--agent-dir", agent_dir, "--json"])
-            self.assertTrue((Path(temp_dir) / "attend-agent-workflow" / "SKILL.md").exists())
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["data"]["skills_root"], str(Path(temp_dir)))
-
-    def test_skills_install_skips_conflicting_agent_link_without_force(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryDirectory() as agent_dir:
-            conflict = Path(agent_dir) / "attend-agent-workflow"
-            conflict.mkdir(parents=True)
-            (conflict / "SKILL.md").write_text("conflict", encoding="utf-8")
-
-            exit_code, payload = self.run_agent_command(
-                ["skills", "install", "--dest", temp_dir, "--agent-dir", agent_dir, "--json"]
-            )
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["data"]["agent_links"][0]["status"], "skipped_conflict")
+        self.assertEqual(payload["command"], "skills.add")
+        self.assertIn("Missing required dependency 'npx'", payload["error"])
 
     def test_run_command_uses_pipeline_exit_code(self) -> None:
         async_payload = {
