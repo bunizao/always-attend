@@ -63,7 +63,7 @@ Use every available source and every reasonable method to reach that goal:
 - attendance DOM state
 - Moodle
 - Ed
-- Gmail
+- Gmail via `gmail-cli`, `gws`, or the Codex Gmail plugin connector when available
 - text evidence
 - image evidence
 - direct manual reasoning over the handoff payload

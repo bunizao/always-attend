@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from always_attend.gmail_codex import codex_gmail_backend_details
 from always_attend.okta_client import (
     OktaCliError,
     OktaClient,
@@ -152,7 +153,7 @@ class SessionManager:
         return [
             self._command_status("okta", ("okta",)),
             self._python_module_status("playwright", "playwright"),
-            self._command_status("gmail", ("gmail-cli", "gmail", "gws"), optional=True),
+            self._gmail_status(),
             self._command_status("moodle-cli", ("moodle-cli", "moodle")),
             self._command_status("edstem", ("edstem-cli", "edstem")),
             self._command_status("gogcli", ("gogcli", "gog")),
@@ -205,6 +206,25 @@ class SessionManager:
         )
 
     @staticmethod
+    def _gmail_status() -> DependencyStatus:
+        for command in ("gmail-cli", "gmail", "gws"):
+            resolved = shutil.which(command)
+            if resolved:
+                return DependencyStatus(name="gmail", status="ok", details=resolved, optional=True)
+
+        codex_backend = codex_gmail_backend_details()
+        if codex_backend is not None:
+            return DependencyStatus(name="gmail", status="ok", details=codex_backend, optional=True)
+
+        return DependencyStatus(
+            name="gmail",
+            status="missing",
+            details="Tried: gmail-cli, gmail, gws, codex Gmail connector",
+            install_hint=_install_hint_for("gmail"),
+            optional=True,
+        )
+
+    @staticmethod
     def _python_module_status(name: str, module_name: str) -> DependencyStatus:
         spec = importlib.util.find_spec(module_name)
         if spec is None:
@@ -221,7 +241,7 @@ class SessionManager:
 def _install_hint_for(name: str) -> str | None:
     hints = {
         "okta": "uv tool install okta-auth-cli",
-        "gmail": "Install gmail-cli or gws and make sure it is available on PATH.",
+        "gmail": "Install gmail-cli or gws, or configure the Codex Gmail plugin connector.",
         "moodle-cli": "uv tool install moodle-cli",
         "edstem": "uv tool install edstem-cli",
         "gogcli": "Install the required GOG CLI plugin or add it to PATH before rerunning attend.",

@@ -112,6 +112,22 @@ class SessionManagerTests(unittest.TestCase):
         self.assertTrue(checks["gmail"].optional)
         self.assertEqual(checks["gmail"].details, "/opt/homebrew/bin/gws")
 
+    def test_doctor_accepts_codex_gmail_connector_backend(self) -> None:
+        manager = SessionManager()
+        with patch(
+            "always_attend.session_manager.shutil.which",
+            return_value=None,
+        ), patch(
+            "always_attend.session_manager.codex_gmail_backend_details",
+            return_value="/opt/homebrew/bin/codex + app://connector_123",
+        ), patch("always_attend.session_manager.importlib.util.find_spec", return_value=SimpleNamespace(origin="playwright")):
+            checks = {item.name: item for item in manager.doctor()}
+
+        self.assertIn("gmail", checks)
+        self.assertEqual(checks["gmail"].status, "ok")
+        self.assertTrue(checks["gmail"].optional)
+        self.assertIn("connector_123", checks["gmail"].details)
+
 
 if __name__ == "__main__":
     unittest.main()
