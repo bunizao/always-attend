@@ -182,6 +182,53 @@ class AgentCliTests(unittest.TestCase):
         self.assertEqual(payload["command"], "doctor")
         self.assertTrue(payload["data"]["ready"])
 
+    def test_setup_command_bootstraps_and_reports_next_steps(self) -> None:
+        with patch(
+            "always_attend.agent_cli.SessionManager.doctor_payload",
+            side_effect=[
+                {"checks": [{"name": "okta", "status": "missing", "optional": False, "install_hint": "uv tool install okta-auth-cli"}], "ready": False},
+                {"checks": [{"name": "okta", "status": "ok", "optional": False, "install_hint": None}], "ready": True},
+            ],
+        ), patch(
+            "always_attend.agent_cli._auto_install_dependencies",
+            return_value=[{"name": "okta", "status": "ok"}],
+        ), patch(
+            "always_attend.agent_cli._setup_playwright_browser",
+            return_value={"status": "ok", "installed": True},
+        ), patch(
+            "always_attend.agent_cli._setup_agent_skill",
+            return_value={"status": "ok", "source": "/tmp/skills"},
+        ):
+            exit_code, payload = self.run_agent_command(["setup", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["command"], "setup")
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["skills"]["status"], "ok")
+        self.assertIn("attend config set --target <attendance-url> --json", payload["data"]["next_steps"])
+
+    def test_setup_command_uses_saved_target_for_next_step(self) -> None:
+        with patch.dict(os.environ, {"PORTAL_URL": "https://attendance.example.test/student/"}, clear=False), patch(
+            "always_attend.agent_cli.SessionManager.doctor_payload",
+            side_effect=[
+                {"checks": [], "ready": True},
+                {"checks": [], "ready": True},
+            ],
+        ), patch(
+            "always_attend.agent_cli._auto_install_dependencies",
+            return_value=[],
+        ), patch(
+            "always_attend.agent_cli._setup_playwright_browser",
+            return_value={"status": "ok", "installed": True},
+        ), patch(
+            "always_attend.agent_cli._setup_agent_skill",
+            return_value={"status": "ok", "source": "/tmp/skills"},
+        ):
+            exit_code, payload = self.run_agent_command(["setup", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["data"]["next_steps"], ["attend auth login https://attendance.example.test/student/ --json"])
+
     def test_skills_list_proxies_to_npx(self) -> None:
         with patch("always_attend.skills_proxy.shutil.which", return_value="/opt/homebrew/bin/npx"), patch(
             "always_attend.skills_proxy.subprocess.run",

@@ -8,6 +8,8 @@ import contextlib
 import io
 import json
 import os
+import shlex
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -23,7 +25,7 @@ from always_attend.okta_client import OktaCliError, OktaClient
 from always_attend.paths import env_file as runtime_env_file
 from always_attend.reporter import build_report, exit_code_for_report
 from always_attend.session_manager import SessionManager
-from always_attend.skills_proxy import run_skills_proxy
+from always_attend.skills_proxy import build_skills_command, find_npx_executable, resolve_skills_source, run_skills_proxy
 from always_attend.source_collectors import collect_candidates_for_sources
 from always_attend.source_clients import SourceCommandError
 from always_attend.submission_plan import (
@@ -34,6 +36,7 @@ from always_attend.submission_plan import (
 )
 from always_attend.submitter import Submitter
 from utils.env_utils import append_to_env_file, ensure_env_file, load_env
+from utils.playwright_install import ensure_playwright_chromium_installed
 
 
 class AgentCliInputError(RuntimeError):
@@ -62,6 +65,13 @@ def build_agent_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser("doctor", help="Check CLI and OCR dependencies.")
     doctor_parser.add_argument("--json", action="store_true")
+
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="Bootstrap dependencies, browser assets, and skills for agents.",
+        description="Bootstrap dependencies, browser assets, and skills for agents.",
+    )
+    setup_parser.add_argument("--json", action="store_true")
 
     auth_parser = subparsers.add_parser("auth", help="Authenticate via the external okta CLI.")
     auth_subparsers = auth_parser.add_subparsers(dest="auth_command", required=True)
@@ -1059,6 +1069,34 @@ def _handle_doctor() -> dict[str, Any]:
     }
 
 
+def _handle_setup() -> dict[str, Any]:
+    manager = SessionManager()
+    doctor_before = manager.doctor_payload()
+    installs = _auto_install_dependencies(doctor_before)
+    browser = _setup_playwright_browser()
+    skills = _setup_agent_skill()
+    doctor_after = manager.doctor_payload()
+    next_steps = _setup_next_steps()
+
+    ready = bool(doctor_after.get("ready"))
+    status = "ok" if ready and skills["status"] == "ok" and browser["status"] != "error" else "error"
+    message = "Agent setup completed." if status == "ok" else "Agent setup completed with issues."
+    return {
+        "status": status,
+        "command": "setup",
+        "message": message,
+        "data": {
+            "doctor_before": doctor_before,
+            "dependency_installs": installs,
+            "playwright_browser": browser,
+            "skills": skills,
+            "doctor_after": doctor_after,
+            "next_steps": next_steps,
+        },
+        "exit_code": 0 if status == "ok" else 1,
+    }
+
+
 def _handle_config(args: argparse.Namespace) -> dict[str, Any]:
     if args.config_command == "get":
         return {
@@ -1079,6 +1117,79 @@ def _handle_config(args: argparse.Namespace) -> dict[str, Any]:
         "data": persisted,
         "exit_code": 0,
     }
+
+
+def _auto_install_dependencies(doctor_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for check in doctor_payload.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        if check.get("status") != "missing" or check.get("optional"):
+            continue
+        name = str(check.get("name", "")).strip()
+        if name not in {"okta", "moodle-cli", "edstem"}:
+            continue
+        install_hint = str(check.get("install_hint") or "").strip()
+        if not install_hint:
+            continue
+        command = shlex.split(install_hint)
+        completed = subprocess.run(command, capture_output=True, text=True)
+        results.append(
+            {
+                "name": name,
+                "command": command,
+                "status": "ok" if completed.returncode == 0 else "error",
+                "stdout": (completed.stdout or "").strip(),
+                "stderr": (completed.stderr or "").strip(),
+                "returncode": completed.returncode,
+            }
+        )
+    return results
+
+
+def _setup_playwright_browser() -> dict[str, Any]:
+    installed = ensure_playwright_chromium_installed()
+    return {
+        "status": "ok" if installed else "error",
+        "action": "playwright.install.chromium",
+        "installed": installed,
+    }
+
+
+def _setup_agent_skill() -> dict[str, Any]:
+    npx_executable = find_npx_executable()
+    if npx_executable is None:
+        return {
+            "status": "error",
+            "source": resolve_skills_source(),
+            "error": "Missing required dependency 'npx'. Install Node.js/npm first.",
+        }
+
+    command = build_skills_command(
+        npx_executable=npx_executable,
+        subcommand="add",
+        forwarded_args=["--all", "-y"],
+        json_output=False,
+    )
+    completed = subprocess.run(command, capture_output=True, text=True)
+    return {
+        "status": "ok" if completed.returncode == 0 else "error",
+        "source": resolve_skills_source(),
+        "proxied_command": command,
+        "stdout": (completed.stdout or "").strip(),
+        "stderr": (completed.stderr or "").strip(),
+        "returncode": completed.returncode,
+    }
+
+
+def _setup_next_steps() -> list[str]:
+    target = (os.getenv("PORTAL_URL") or "").strip()
+    if target:
+        return [f"attend auth login {target} --json"]
+    return [
+        "attend config set --target <attendance-url> --json",
+        "attend auth login <attendance-url> --json",
+    ]
 
 
 def _handle_resolve(args: argparse.Namespace) -> dict[str, Any]:
@@ -1123,6 +1234,8 @@ def main(argv: list[str]) -> int:
             payload = asyncio.run(_handle_submit(args))
         elif args.command == "report":
             payload = asyncio.run(_handle_report(args))
+        elif args.command == "setup":
+            payload = _handle_setup()
         elif args.command == "config":
             payload = _handle_config(args)
         elif args.command == "resolve":

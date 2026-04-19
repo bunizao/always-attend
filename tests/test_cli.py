@@ -34,6 +34,7 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("run", result.stdout)
         self.assertIn("inspect", result.stdout)
         self.assertIn("auth", result.stdout)
+        self.assertIn("setup", result.stdout)
         self.assertIn("skills", result.stdout)
 
     def test_attend_console_script_help(self) -> None:
@@ -90,6 +91,11 @@ class CliEntrypointTests(unittest.TestCase):
         self.assertIn("--sources", result.stdout)
         self.assertIn("--week", result.stdout)
         self.assertIn("--demo", result.stdout)
+
+    def test_agent_setup_help(self) -> None:
+        result = self.run_command(sys.executable, "-m", "always_attend", "setup", "--help")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Bootstrap dependencies", result.stdout)
 
     def test_agent_skills_help(self) -> None:
         result = self.run_command(sys.executable, "-m", "always_attend", "skills", "--help")

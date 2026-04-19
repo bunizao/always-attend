@@ -53,7 +53,7 @@ def run_skills_proxy(argv: list[str]) -> int:
             exit_code=2,
         )
 
-    npx_executable = shutil.which("npx")
+    npx_executable = find_npx_executable()
     if npx_executable is None:
         return _emit_error(
             command=f"skills.{subcommand}",
@@ -63,7 +63,7 @@ def run_skills_proxy(argv: list[str]) -> int:
         )
 
     forwarded_args = passthrough[1:]
-    command = _build_skills_command(
+    command = build_skills_command(
         npx_executable=npx_executable,
         subcommand=subcommand,
         forwarded_args=forwarded_args,
@@ -86,7 +86,12 @@ def run_skills_proxy(argv: list[str]) -> int:
     return result.returncode
 
 
-def _build_skills_command(
+def find_npx_executable() -> str | None:
+    """Return the npx executable when Node.js/npm is available."""
+    return shutil.which("npx")
+
+
+def build_skills_command(
     *,
     npx_executable: str,
     subcommand: str,
@@ -95,7 +100,7 @@ def _build_skills_command(
 ) -> list[str]:
     command = [npx_executable, "skills", subcommand]
     if subcommand == "add":
-        source = _skills_source()
+        source = resolve_skills_source()
         if forwarded_args and not forwarded_args[0].startswith("-"):
             source = forwarded_args[0]
             forwarded_args = forwarded_args[1:]
@@ -108,7 +113,7 @@ def _build_skills_command(
     return command
 
 
-def _skills_source() -> str:
+def resolve_skills_source() -> str:
     configured = (os.getenv("ATTEND_SKILLS_SOURCE") or "").strip()
     if configured:
         return configured
@@ -124,7 +129,7 @@ def _emit_help(*, json_output: bool) -> int:
     help_text = (
         "Usage: attend skills <subcommand> [args...]\n\n"
         "This is a thin alias over `npx skills ...`.\n"
-        f"`attend skills add` defaults to source `{_skills_source()}`.\n\n"
+        f"`attend skills add` defaults to source `{resolve_skills_source()}`.\n\n"
         "Examples:\n"
         "  attend skills add --all\n"
         "  attend skills add --agent codex --skill attend-agent-workflow\n"
@@ -139,7 +144,7 @@ def _emit_help(*, json_output: bool) -> int:
                     "command": "skills.help",
                     "message": "Skills proxy help rendered.",
                     "data": {
-                        "default_source": _skills_source(),
+                        "default_source": resolve_skills_source(),
                         "aliased_subcommands": sorted(ALIASED_SUBCOMMANDS),
                         "deprecated_subcommand_aliases": DEPRECATED_SUBCOMMAND_ALIASES,
                     },
