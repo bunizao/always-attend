@@ -3,6 +3,13 @@
 Do not assume the machine is ready.
 Bootstrap in this exact order before the first real `attend` command.
 
+Preferred path:
+
+```bash
+uv tool install always-attend
+attend setup
+```
+
 ## 1. Confirm Python exists
 
 Run one of these:
@@ -68,7 +75,18 @@ uv tool run --from always-attend attend doctor --json
 
 If you are inside the Always Attend repository, `PYTHONPATH=src python -m always_attend ...` is also valid for local development.
 
-## 4. Read `doctor --json`
+## 4. Run `attend setup`
+
+Use `attend setup` to prepare the agent bootstrap path after installation.
+
+It should:
+
+1. Install the bundled `attend-agent-workflow` skill via `npx skills add`
+2. Ensure Playwright Chromium assets are available
+3. Install missing mandatory source CLIs when possible
+4. Leave the machine ready for `attend doctor --json`
+
+## 5. Read `doctor --json`
 
 Use `attend doctor --json` as the machine-readable gate before collecting or submitting anything.
 

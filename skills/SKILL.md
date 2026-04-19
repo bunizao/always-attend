@@ -135,6 +135,7 @@ Keep the wording direct and explicit.
 ## Bootstrap
 
 Read `BOOTSTRAP.md` only when the machine is not already ready for `attend`.
+The preferred bootstrap command is `attend setup`.
 
 Use that file for:
 
