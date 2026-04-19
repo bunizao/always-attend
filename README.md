@@ -1,5 +1,29 @@
 # Always-Attend
 
+Always-Attend is an AI-native CLI for attendance workflows.
+It can inspect the attendance portal, collect evidence from Gmail, Moodle, Ed, and GOG, match likely codes against open items, submit high-confidence results, and report unresolved states in machine-readable JSON.
+
+## Quick Start For Agents
+
+```bash
+uv tool install always-attend
+attend setup
+```
+
+That is the intended bootstrap path for agents.
+
+## What It Does
+
+- Inspect the attendance site DOM before guessing from external sources
+- Collect structured code candidates from Gmail, Moodle, Ed, and GOG
+- Package text and image evidence for multimodal reasoning
+- Submit guarded high-confidence matches
+- Report rejected, locked, and unresolved items in JSON
+
+---
+
+# Always-Attend
+
 > *The following is excerpted from a reflection I wrote in my FIT1045 H3 report.*
 
 ---
