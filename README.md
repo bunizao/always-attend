@@ -12,10 +12,6 @@
   Always-Attend inspects what is open, collects evidence, matches candidates, and submits only when it is confident.
 </p>
 
-[Python](https://www.python.org)
-[uv](https://github.com/astral-sh/uv)
-[AI Native](#philosophy)
-
 Always-Attend does what most people do manually: find the code, figure out which slot it belongs to, and submit it. It checks what's actually open, pulls candidates from Gmail, Moodle, Ed, and GOG, and submits only when it's confident.
 
 It's built to be run by an **agent**. The external sources are eyes, and `attend` is the hand. **The agent is the one that decides.**
