@@ -26,7 +26,6 @@ class PathDefaultsTests(unittest.TestCase):
             self.assertEqual(paths.data_dir(), fake_home / ".local" / "share" / "always-attend")
             self.assertEqual(paths.env_file(), fake_home / ".config" / "always-attend" / ".env")
             self.assertEqual(paths.storage_state_file(), fake_home / ".local" / "state" / "always-attend" / "storage_state.json")
-            self.assertEqual(paths.stats_file(), fake_home / ".local" / "state" / "always-attend" / "attendance_stats.json")
             self.assertEqual(paths.codes_db_path(), fake_home / ".local" / "share" / "always-attend" / "codes")
 
     def test_windows_locations(self) -> None:
@@ -68,8 +67,6 @@ class PathDefaultsTests(unittest.TestCase):
             {
                 "ENV_FILE": "/tmp/custom.env",
                 "STORAGE_STATE": "/tmp/storage.json",
-                "PORTAL_STATE_FILE": "/tmp/portal.json",
-                "ATTENDANCE_STATS_FILE": "/tmp/stats.json",
                 "CODES_DB_PATH": "/tmp/data-root",
                 "USER_DATA_DIR": "/tmp/profile",
             },
@@ -77,8 +74,6 @@ class PathDefaultsTests(unittest.TestCase):
         ):
             self.assertEqual(paths.env_file(), Path("/tmp/custom.env"))
             self.assertEqual(paths.storage_state_file(), Path("/tmp/storage.json"))
-            self.assertEqual(paths.portal_state_file(), Path("/tmp/portal.json"))
-            self.assertEqual(paths.stats_file(), Path("/tmp/stats.json"))
             self.assertEqual(paths.codes_db_path(), Path("/tmp/data-root"))
             self.assertEqual(paths.user_data_dir(), Path("/tmp/profile"))
 
@@ -88,14 +83,12 @@ class PathDefaultsTests(unittest.TestCase):
             {
                 "ENV_FILE": "/tmp/attend-config/.env",
                 "STORAGE_STATE": "storage_state.json",
-                "ATTENDANCE_STATS_FILE": "attendance_stats.json",
                 "CODES_DB_PATH": "data",
                 "USER_DATA_DIR": "profile",
             },
             clear=True,
         ):
             self.assertEqual(paths.storage_state_file(), Path("/tmp/attend-config/storage_state.json"))
-            self.assertEqual(paths.stats_file(), Path("/tmp/attend-config/attendance_stats.json"))
             self.assertEqual(paths.codes_db_path(), Path("/tmp/attend-config/data"))
             self.assertEqual(paths.user_data_dir(), Path("/tmp/attend-config/profile"))
 

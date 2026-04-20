@@ -21,13 +21,24 @@ def ensure_playwright_chromium_installed() -> bool:
     os.environ[_INSTALL_ATTEMPT_ENV] = "1"
     logger.info("Playwright Chromium is unavailable. Attempting automatic download...")
     try:
-        subprocess.run(
+        result = subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
             check=True,
+            capture_output=True,
+            text=True,
         )
     except Exception as exc:
-        logger.warning(f"Automatic Chromium download failed: {exc}")
+        details = ""
+        if isinstance(exc, subprocess.CalledProcessError):
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            details = stderr or stdout
+        suffix = f": {details}" if details else f": {exc}"
+        logger.warning(f"Automatic Chromium download failed{suffix}")
         return False
 
+    stderr = (result.stderr or "").strip()
+    if stderr:
+        logger.info(stderr)
     logger.info("Playwright Chromium download completed.")
     return True

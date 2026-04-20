@@ -17,6 +17,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check out mock portal
+        uses: actions/checkout@v4
+        with:
+          repository: bunizao/aplus-mock-portal
+          path: aplus-mock-portal
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -26,6 +32,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e . build twine
+
+      - name: Export mock portal root
+        run: echo "APLUS_MOCK_PORTAL_ROOT=$GITHUB_WORKSPACE/aplus-mock-portal" >> "$GITHUB_ENV"
 
       - name: Run CLI smoke tests
         run: python -m unittest discover -s tests -p "test_*.py" -v

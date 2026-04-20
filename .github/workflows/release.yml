@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Project version from pyproject.toml, for example 0.2.0a0"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -22,23 +28,44 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify tag matches project version
+      - name: Resolve release metadata
+        id: release_meta
         env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           python - <<'PY'
           import os
           import pathlib
+          import re
           import tomllib
 
           pyproject = pathlib.Path("pyproject.toml")
           data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
           version = data["project"]["version"]
-          expected_tag = f"v{version}"
-          actual_tag = os.environ["GITHUB_REF_NAME"]
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          actual_tag = os.environ.get("GITHUB_REF_NAME", "")
+          requested_version = os.environ.get("INPUT_VERSION", "").strip()
 
-          if actual_tag != expected_tag:
-              raise SystemExit(f"Tag {actual_tag!r} does not match project version {expected_tag!r}.")
+          if event_name == "workflow_dispatch":
+              if requested_version != version:
+                  raise SystemExit(
+                      f"Manual release version {requested_version!r} does not match project version {version!r}."
+                  )
+              release_tag = f"v{version}"
+          else:
+              expected_tag = f"v{version}"
+              if actual_tag != expected_tag:
+                  raise SystemExit(f"Tag {actual_tag!r} does not match project version {expected_tag!r}.")
+              release_tag = actual_tag
+
+          prerelease = bool(re.search(r"[A-Za-z]", version))
+          github_output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with github_output.open("a", encoding="utf-8") as handle:
+              handle.write(f"version={version}\n")
+              handle.write(f"tag={release_tag}\n")
+              handle.write(f"prerelease={'true' if prerelease else 'false'}\n")
           PY
 
       - name: Install release tooling
@@ -53,19 +80,23 @@ jobs:
         run: python -m build
 
       - name: Validate package metadata
-        run: python -m twine check dist/*
+        run: python -m twine check dist/always_attend-${{ steps.release_meta.outputs.version }}*
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}
+          files: dist/always_attend-${{ steps.release_meta.outputs.version }}*
           generate_release_notes: true
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: python-dist
-          path: dist/
+          path: dist/always_attend-${{ steps.release_meta.outputs.version }}*
 
   publish-pypi:
     needs: build-release
