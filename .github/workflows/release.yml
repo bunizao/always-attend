@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Project version from pyproject.toml, for example 0.2.0a0"
+        description: "Project version from pyproject.toml, for example 0.2.0"
         required: true
         type: string
 
@@ -80,7 +80,10 @@ jobs:
         run: python -m build
 
       - name: Validate package metadata
-        run: python -m twine check dist/always_attend-${{ steps.release_meta.outputs.version }}*
+        run: |
+          python -m twine check \
+            dist/always_attend-${{ steps.release_meta.outputs.version }}.tar.gz \
+            dist/always_attend-${{ steps.release_meta.outputs.version }}-*.whl
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -89,14 +92,18 @@ jobs:
           name: ${{ steps.release_meta.outputs.tag }}
           target_commitish: ${{ github.sha }}
           prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}
-          files: dist/always_attend-${{ steps.release_meta.outputs.version }}*
-          generate_release_notes: true
+          files: |
+            dist/always_attend-${{ steps.release_meta.outputs.version }}.tar.gz
+            dist/always_attend-${{ steps.release_meta.outputs.version }}-*.whl
+          body_path: release/release-notes.md
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: python-dist
-          path: dist/always_attend-${{ steps.release_meta.outputs.version }}*
+          path: |
+            dist/always_attend-${{ steps.release_meta.outputs.version }}.tar.gz
+            dist/always_attend-${{ steps.release_meta.outputs.version }}-*.whl
 
   publish-pypi:
     needs: build-release
