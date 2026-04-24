@@ -53,6 +53,14 @@ def _data_root() -> Path:
     return codes_db_path().expanduser().resolve()
 
 MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+SLOT_TIME_RANGE_RE = re.compile(
+    r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|–|to)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b",
+    re.I,
+)
+SLOT_SINGLE_TIME_RE = re.compile(
+    r"\b\d{1,2}(?::\d{2})\s*(?:am|pm)?\b|\b\d{1,2}\s*(?:am|pm)\b",
+    re.I,
+)
 
 def format_anchor(date_str: str) -> str:
     d = datetime.strptime(date_str, "%Y-%m-%d")
@@ -206,13 +214,15 @@ async def _collect_day_anchors(page: Page) -> List[str]:
 
 def _normalize_slot_text(slot: str) -> str:
     s = (slot or "").strip().lower()
+    s = SLOT_TIME_RANGE_RE.sub(" ", s)
+    s = SLOT_SINGLE_TIME_RE.sub(" ", s)
     # normalize common labels e.g., "Workshop 1" -> "workshop 01"
     s = s.replace("laboratory", "lab")
     s = s.replace("tutorial", "tut")
     s = s.replace("practical", "prac")
     s = s.replace("session", "sess")
     s = s.replace("-", " ")
-    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
     s = re.sub(r"\b(\d)\b", r"0\1", s)  # pad single digit
     return s
 
@@ -486,9 +496,9 @@ async def _submit_codes_for_target(
             pass
 
         verified = await verify_entry_mark(page, base_url, target.anchor, target.course_code, target.slot_label)
-        if ok and not verified:
-            logger.debug("Submission for %s %s succeeded but tick not confirmed", target.course_code, target.slot_label)
-        if ok:
+        if ok and verified:
+            async with used_codes_lock:
+                used_codes.add(code)
             if progress_tracker:
                 progress_tracker.update_status("Success ✓")
                 progress_tracker.update_code_progress(total)
@@ -498,6 +508,15 @@ async def _submit_codes_for_target(
             logger.info(f"✓ {target.course_code} {target.slot_label}: {code}")
             success_code = code
             return SubmissionOutcome(target=target, attempts=attempts, success=True, code=success_code)
+        if ok and not verified:
+            logger.warning(
+                "Submission for %s %s returned ok for %s but portal state stayed open",
+                target.course_code,
+                target.slot_label,
+                code,
+            )
+            if progress_tracker:
+                progress_tracker.update_status("Not confirmed, trying next code…")
 
     if progress_tracker:
         progress_tracker.update_status("Failed")
@@ -617,15 +636,18 @@ async def open_entry_for_course_slot(page: Page, base_url: str, course_code: str
         anchors = await _collect_day_anchors(page)
 
         async def try_in_root(root) -> bool:
-            # li that mentions course and slot
             candidates = root.locator('li:not(.ui-disabled)').filter(
                 has_text=re.compile(re.escape(course_code), re.I)
-            ).filter(
-                has_text=re.compile(re.escape(slot_label), re.I)
             )
             count = await candidates.count()
             for i in range(count):
                 li = candidates.nth(i)
+                try:
+                    text_norm = _normalize_slot_text((await li.inner_text()) or "")
+                except Exception:
+                    continue
+                if target_slot_norm and target_slot_norm not in text_norm:
+                    continue
                 link = li.locator('a[href*="Entry.aspx"]').first
                 if await link.count() == 0:
                     continue
